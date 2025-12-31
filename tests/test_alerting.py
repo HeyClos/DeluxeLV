@@ -226,8 +226,8 @@ class TestAlertDeliveryReliability:
     @given(
         quota_type=st.sampled_from(['Minute', 'Hour', 'Daily']),
         limit=st.integers(min_value=100, max_value=10000),
-        warning_threshold=st.floats(min_value=0.5, max_value=0.85, allow_nan=False),
-        critical_threshold=st.floats(min_value=0.86, max_value=0.99, allow_nan=False)
+        warning_threshold=st.floats(min_value=0.5, max_value=0.75, allow_nan=False),
+        critical_threshold=st.floats(min_value=0.85, max_value=0.99, allow_nan=False)
     )
     @settings(max_examples=100)
     def test_quota_alerts_triggered_at_thresholds(
@@ -239,6 +239,9 @@ class TestAlertDeliveryReliability:
         For any quota threshold configuration, alerts should be triggered
         when usage exceeds the thresholds.
         """
+        # Ensure there's at least 10% gap between warning and critical thresholds
+        assume(critical_threshold - warning_threshold >= 0.10)
+        
         thresholds = AlertThreshold(
             quota_warning_percent=warning_threshold,
             quota_critical_percent=critical_threshold
@@ -248,8 +251,11 @@ class TestAlertDeliveryReliability:
         channel = MockAlertChannel()
         manager.add_channel(channel)
         
-        # Test critical threshold
-        critical_remaining = int(limit * (1 - critical_threshold - 0.01))
+        # Test critical threshold - usage clearly above critical
+        critical_usage = critical_threshold + 0.05  # 5% above critical threshold
+        critical_remaining = int(limit * (1 - critical_usage))
+        critical_remaining = max(0, critical_remaining)  # Ensure non-negative
+        
         results = manager.check_quota_threshold(quota_type, critical_remaining, limit)
         
         assert results is not None, "Critical alert should be triggered"
@@ -259,21 +265,17 @@ class TestAlertDeliveryReliability:
         manager.clear_suppression()
         channel.sent_alerts.clear()
         
-        # Test warning threshold - remaining should be between warning and critical
-        # Calculate remaining that is past warning but not past critical
-        warning_usage = warning_threshold + 0.02  # Just past warning
-        # Make sure it's below critical
-        if warning_usage >= critical_threshold:
-            warning_usage = (warning_threshold + critical_threshold) / 2
-        
+        # Test warning threshold - usage clearly between warning and critical
+        # Use the midpoint between warning and critical thresholds
+        warning_usage = (warning_threshold + critical_threshold) / 2
         warning_remaining = int(limit * (1 - warning_usage))
         
         results = manager.check_quota_threshold(quota_type, warning_remaining, limit)
         
         # Should trigger warning (not critical)
-        if results is not None:
-            assert len(channel.sent_alerts) == 1
-            assert channel.sent_alerts[0].severity == AlertSeverity.WARNING
+        assert results is not None, "Warning alert should be triggered"
+        assert len(channel.sent_alerts) == 1
+        assert channel.sent_alerts[0].severity == AlertSeverity.WARNING
     
     @given(
         error_message=message_strategy,

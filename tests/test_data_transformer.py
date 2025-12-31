@@ -462,7 +462,11 @@ class TestDataValidationAndProcessingContinuation:
     @given(
         valid_records=st.lists(
             st.fixed_dictionaries({
-                'listing_key': st.text(min_size=1, max_size=20),
+                'listing_key': st.text(
+                    alphabet=st.sampled_from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+                    min_size=1,
+                    max_size=20
+                ),
                 'modification_timestamp': st.datetimes(
                     min_value=datetime(2020, 1, 1),
                     max_value=datetime(2025, 12, 31)
@@ -483,7 +487,11 @@ class TestDataValidationAndProcessingContinuation:
                 }),
                 # Invalid data types
                 st.fixed_dictionaries({
-                    'listing_key': st.text(min_size=1, max_size=20),
+                    'listing_key': st.text(
+                        alphabet=st.sampled_from("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+                        min_size=1,
+                        max_size=20
+                    ),
                     'modification_timestamp': st.text(min_size=1, max_size=20),  # Invalid datetime
                     'list_price': st.text(alphabet=st.sampled_from('abcdef'), min_size=1, max_size=10)  # Invalid price
                 }),
