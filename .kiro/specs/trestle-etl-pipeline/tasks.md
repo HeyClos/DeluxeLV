@@ -130,28 +130,28 @@ This implementation plan breaks down the Trestle ETL Pipeline into discrete codi
     - **Property 12: Metadata Tracking Accuracy**
     - **Validates: Requirements 3.4**
 
-- [ ] 7. Implement incremental updates and cost optimization
-  - [ ] 7.1 Add incremental update logic
+- [x] 7. Implement incremental updates and cost optimization
+  - [x] 7.1 Add incremental update logic
     - Query last successful sync timestamp from metadata
     - Build OData filters for ModificationTimestamp-based incremental updates
     - Implement request batching for multiple data types
     - _Requirements: 4.2, 4.3, 4.5_
 
-  - [ ] 7.2 Write property test for incremental updates
+  - [x] 7.2 Write property test for incremental updates
     - **Property 13: Incremental Update Efficiency**
     - **Validates: Requirements 4.2, 4.3**
 
-  - [ ] 7.3 Write property test for request batching
+  - [x] 7.3 Write property test for request batching
     - **Property 15: Request Batching Efficiency**
     - **Validates: Requirements 4.5**
 
-  - [ ] 7.4 Implement cost monitoring and tracking
+  - [x] 7.4 Implement cost monitoring and tracking
     - Create CostMonitor class for API usage tracking
     - Add cost estimation based on quota usage
     - Implement usage reporting and alerting
     - _Requirements: 6.4_
 
-  - [ ] 7.5 Write property test for cost tracking
+  - [x] 7.5 Write property test for cost tracking
     - **Property 18: Cost Tracking Accuracy**
     - **Validates: Requirements 6.4**
 
