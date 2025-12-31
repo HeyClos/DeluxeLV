@@ -17,28 +17,28 @@ This implementation plan breaks down the Trestle ETL Pipeline into discrete codi
   - **Property 20: Configuration Loading Completeness**
   - **Validates: Requirements 7.1, 7.2, 7.3, 7.4**
 
-- [ ] 2. Implement OData client for Trestle API
-  - [ ] 2.1 Create ODataClient class with OAuth2 authentication
+- [x] 2. Implement OData client for Trestle API
+  - [x] 2.1 Create ODataClient class with OAuth2 authentication
     - Implement client credentials flow for token acquisition
     - Add token caching with expiration handling (8-hour validity)
     - Include proper error handling for authentication failures
     - _Requirements: 1.1_
 
-  - [ ] 2.2 Write property test for authentication handling
+  - [x] 2.2 Write property test for authentication handling
     - **Property 1: Authentication Success and Failure Handling**
     - **Validates: Requirements 1.1**
 
-  - [ ] 2.3 Implement OData query construction and execution
+  - [x] 2.3 Implement OData query construction and execution
     - Build OData URLs with $filter, $select, $top, $skip parameters
     - Add support for metadata endpoint queries
     - Implement response parsing and validation
     - _Requirements: 1.2, 1.4_
 
-  - [ ] 2.4 Write property test for OData query construction
+  - [x] 2.4 Write property test for OData query construction
     - **Property 2: OData Query Construction**
     - **Validates: Requirements 1.2**
 
-  - [ ] 2.5 Write property test for response validation
+  - [x] 2.5 Write property test for response validation
     - **Property 4: Response Validation and Error Handling**
     - **Validates: Requirements 1.4**
 
