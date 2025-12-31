@@ -99,34 +99,34 @@ This implementation plan breaks down the Trestle ETL Pipeline into discrete codi
     - **Property 9: Duplicate Detection Consistency**
     - **Validates: Requirements 2.5**
 
-- [ ] 6. Implement MySQL database layer
-  - [ ] 6.1 Create database schema and connection handling
+- [x] 6. Implement MySQL database layer
+  - [x] 6.1 Create database schema and connection handling
     - Define properties and etl_sync_log table schemas
     - Implement MySQLLoader class with connection pooling
     - Add connection retry logic with exponential backoff
     - _Requirements: 3.5_
 
-  - [ ] 6.2 Implement batch operations for data loading
+  - [x] 6.2 Implement batch operations for data loading
     - Create batch insert functionality with configurable batch sizes
     - Implement upsert logic using ON DUPLICATE KEY UPDATE
     - Add transaction handling with rollback on errors
     - _Requirements: 3.1, 3.2_
 
-  - [ ] 6.3 Write property test for batch operation usage
+  - [x] 6.3 Write property test for batch operation usage
     - **Property 10: Batch Operation Usage**
     - **Validates: Requirements 3.1**
 
-  - [ ] 6.4 Write property test for upsert behavior
+  - [x] 6.4 Write property test for upsert behavior
     - **Property 11: Upsert Behavior Correctness**
     - **Validates: Requirements 3.2**
 
-  - [ ] 6.5 Add sync metadata tracking
+  - [x] 6.5 Add sync metadata tracking
     - Implement sync run logging with timestamps and counts
     - Track API usage and performance metrics
     - Add error logging with detailed context
     - _Requirements: 3.4_
 
-  - [ ] 6.6 Write property test for metadata tracking
+  - [x] 6.6 Write property test for metadata tracking
     - **Property 12: Metadata Tracking Accuracy**
     - **Validates: Requirements 3.4**
 
