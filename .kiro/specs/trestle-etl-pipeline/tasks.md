@@ -70,32 +70,32 @@ This implementation plan breaks down the Trestle ETL Pipeline into discrete codi
 - [x] 4. Checkpoint - Ensure API client tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. Implement data transformation layer
-  - [ ] 5.1 Create DataTransformer class for field normalization
+- [x] 5. Implement data transformation layer
+  - [x] 5.1 Create DataTransformer class for field normalization
     - Implement field name normalization for MySQL compatibility
     - Add data type conversion from OData to MySQL formats
     - Include data validation for required fields
     - _Requirements: 2.1, 2.2, 2.4_
 
-  - [ ] 5.2 Write property test for field name normalization
+  - [x] 5.2 Write property test for field name normalization
     - **Property 6: Field Name Normalization Consistency**
     - **Validates: Requirements 2.1**
 
-  - [ ] 5.3 Write property test for data type conversion
+  - [x] 5.3 Write property test for data type conversion
     - **Property 8: Data Type Conversion Accuracy**
     - **Validates: Requirements 2.4**
 
-  - [ ] 5.4 Add duplicate detection and error handling
+  - [x] 5.4 Add duplicate detection and error handling
     - Implement duplicate record identification by ListingKey
     - Add error logging with continuation for invalid records
     - Create data validation pipeline with detailed error reporting
     - _Requirements: 2.3, 2.5_
 
-  - [ ] 5.5 Write property test for data validation and processing continuation
+  - [x] 5.5 Write property test for data validation and processing continuation
     - **Property 7: Data Validation and Processing Continuation**
     - **Validates: Requirements 2.2, 2.3, 3.3**
 
-  - [ ] 5.6 Write property test for duplicate detection
+  - [x] 5.6 Write property test for duplicate detection
     - **Property 9: Duplicate Detection Consistency**
     - **Validates: Requirements 2.5**
 
