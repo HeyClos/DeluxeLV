@@ -67,7 +67,7 @@ This implementation plan breaks down the Trestle ETL Pipeline into discrete codi
     - **Property 14: Quota Monitoring and Alerting**
     - **Validates: Requirements 4.4**
 
-- [ ] 4. Checkpoint - Ensure API client tests pass
+- [x] 4. Checkpoint - Ensure API client tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Implement data transformation layer
