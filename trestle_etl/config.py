@@ -266,3 +266,208 @@ class ConfigManager:
         if not self._loaded or not self._config:
             raise ConfigurationError("Configuration not loaded. Call load_config() first.")
         return self._config
+
+
+class ConfigValidator:
+    """
+    Validates configuration settings on startup.
+    
+    Performs comprehensive validation of all configuration values
+    to catch issues early before ETL execution.
+    """
+    
+    VALID_LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    
+    def __init__(self, config: Config):
+        """
+        Initialize ConfigValidator.
+        
+        Args:
+            config: Configuration object to validate.
+        """
+        self.config = config
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+    
+    def validate(self) -> bool:
+        """
+        Perform all validation checks.
+        
+        Returns:
+            True if configuration is valid, False otherwise.
+        """
+        self.errors = []
+        self.warnings = []
+        
+        self._validate_api_config()
+        self._validate_database_config()
+        self._validate_etl_config()
+        self._validate_alert_config()
+        
+        return len(self.errors) == 0
+    
+    def _validate_api_config(self) -> None:
+        """Validate API configuration."""
+        api = self.config.api
+        
+        # Validate client_id
+        if not api.client_id or len(api.client_id.strip()) == 0:
+            self.errors.append("API client_id is empty")
+        
+        # Validate client_secret
+        if not api.client_secret or len(api.client_secret.strip()) == 0:
+            self.errors.append("API client_secret is empty")
+        
+        # Validate base_url format
+        if not api.base_url.startswith(("http://", "https://")):
+            self.errors.append(f"API base_url must start with http:// or https://: {api.base_url}")
+        
+        # Validate token_url format
+        if not api.token_url.startswith(("http://", "https://")):
+            self.errors.append(f"API token_url must start with http:// or https://: {api.token_url}")
+        
+        # Validate timeout
+        if api.timeout <= 0:
+            self.errors.append(f"API timeout must be positive: {api.timeout}")
+        elif api.timeout > 300:
+            self.warnings.append(f"API timeout is very high ({api.timeout}s), consider reducing")
+    
+    def _validate_database_config(self) -> None:
+        """Validate database configuration."""
+        db = self.config.database
+        
+        # Validate host
+        if not db.host or len(db.host.strip()) == 0:
+            self.errors.append("Database host is empty")
+        
+        # Validate port
+        if db.port <= 0 or db.port > 65535:
+            self.errors.append(f"Database port must be between 1 and 65535: {db.port}")
+        
+        # Validate database name
+        if not db.database or len(db.database.strip()) == 0:
+            self.errors.append("Database name is empty")
+        
+        # Validate user
+        if not db.user or len(db.user.strip()) == 0:
+            self.errors.append("Database user is empty")
+        
+        # Validate password (warn if empty, but don't error - some setups allow it)
+        if not db.password:
+            self.warnings.append("Database password is empty - ensure this is intentional")
+        
+        # Validate charset
+        valid_charsets = ["utf8", "utf8mb4", "latin1", "ascii"]
+        if db.charset not in valid_charsets:
+            self.warnings.append(f"Unusual database charset: {db.charset}")
+    
+    def _validate_etl_config(self) -> None:
+        """Validate ETL configuration."""
+        etl = self.config.etl
+        
+        # Validate batch_size
+        if etl.batch_size <= 0:
+            self.errors.append(f"Batch size must be positive: {etl.batch_size}")
+        elif etl.batch_size > 10000:
+            self.warnings.append(f"Batch size is very large ({etl.batch_size}), may cause memory issues")
+        
+        # Validate max_retries
+        if etl.max_retries < 0:
+            self.errors.append(f"Max retries cannot be negative: {etl.max_retries}")
+        elif etl.max_retries > 10:
+            self.warnings.append(f"Max retries is high ({etl.max_retries}), may cause long delays")
+        
+        # Validate log_level
+        if etl.log_level.upper() not in self.VALID_LOG_LEVELS:
+            self.errors.append(
+                f"Invalid log level: {etl.log_level}. "
+                f"Must be one of: {', '.join(self.VALID_LOG_LEVELS)}"
+            )
+        
+        # Validate lock_file_path
+        if not etl.lock_file_path:
+            self.errors.append("Lock file path is empty")
+        else:
+            lock_dir = Path(etl.lock_file_path).parent
+            if not lock_dir.exists():
+                self.warnings.append(f"Lock file directory does not exist: {lock_dir}")
+        
+        # Validate log_dir
+        if not etl.log_dir:
+            self.errors.append("Log directory is empty")
+    
+    def _validate_alert_config(self) -> None:
+        """Validate alert configuration."""
+        alert = self.config.alert
+        
+        # Validate email settings if enabled
+        if alert.email_enabled:
+            if not alert.email_recipients:
+                self.errors.append("Email alerts enabled but no recipients configured")
+            
+            if not alert.smtp_host:
+                self.errors.append("Email alerts enabled but SMTP host not configured")
+            
+            if alert.smtp_port <= 0 or alert.smtp_port > 65535:
+                self.errors.append(f"Invalid SMTP port: {alert.smtp_port}")
+        
+        # Validate webhook settings if enabled
+        if alert.webhook_enabled:
+            if not alert.webhook_url:
+                self.errors.append("Webhook alerts enabled but URL not configured")
+            elif not alert.webhook_url.startswith(("http://", "https://")):
+                self.errors.append(f"Webhook URL must start with http:// or https://: {alert.webhook_url}")
+    
+    def get_validation_report(self) -> Dict[str, Any]:
+        """
+        Get a detailed validation report.
+        
+        Returns:
+            Dictionary with validation results.
+        """
+        return {
+            "valid": len(self.errors) == 0,
+            "errors": self.errors,
+            "warnings": self.warnings,
+            "error_count": len(self.errors),
+            "warning_count": len(self.warnings)
+        }
+    
+    def raise_on_errors(self) -> None:
+        """
+        Raise ConfigurationError if validation failed.
+        
+        Raises:
+            ConfigurationError: If there are validation errors.
+        """
+        if self.errors:
+            error_list = "\n  - ".join(self.errors)
+            raise ConfigurationError(f"Configuration validation failed:\n  - {error_list}")
+
+
+def validate_config_on_startup(config: Config, raise_on_error: bool = True) -> Dict[str, Any]:
+    """
+    Validate configuration on startup.
+    
+    This function should be called at the start of ETL execution
+    to catch configuration issues early.
+    
+    Args:
+        config: Configuration object to validate.
+        raise_on_error: If True, raise exception on validation errors.
+        
+    Returns:
+        Validation report dictionary.
+        
+    Raises:
+        ConfigurationError: If raise_on_error is True and validation fails.
+    """
+    validator = ConfigValidator(config)
+    validator.validate()
+    
+    report = validator.get_validation_report()
+    
+    if raise_on_error and not report["valid"]:
+        validator.raise_on_errors()
+    
+    return report

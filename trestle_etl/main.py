@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-from .config import ConfigManager, Config, ConfigurationError
+from .config import ConfigManager, Config, ConfigurationError, validate_config_on_startup
 from .odata_client import ODataClient, ODataError, RateLimitError
 from .data_transformer import DataTransformer, DataTransformationError, ValidationError
 from .mysql_loader import MySQLLoader, DatabaseError, SyncStatus, SyncRun
@@ -836,6 +836,17 @@ def main(args: Optional[List[str]] = None) -> int:
         config = config_manager.load_config()
     except ConfigurationError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
+        return 1
+    
+    # Validate configuration on startup (Requirement 7.3)
+    try:
+        validation_report = validate_config_on_startup(config, raise_on_error=True)
+        if validation_report.get('warnings') and parsed_args.verbose:
+            print("Configuration warnings:")
+            for warning in validation_report['warnings']:
+                print(f"  ⚠️  {warning}")
+    except ConfigurationError as e:
+        print(f"Configuration validation failed: {e}", file=sys.stderr)
         return 1
     
     # Set log level based on verbose flag
