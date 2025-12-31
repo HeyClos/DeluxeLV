@@ -25,3 +25,7 @@ from .alerting import (
     Alert, AlertResult, AlertSeverity, AlertType, AlertThreshold,
     create_alert_manager_from_config
 )
+from .main import (
+    ETLOrchestrator, ETLExecutionError, ExecutionLock, LockAcquisitionError,
+    ResourceMonitor, ResourceConstraintError, run_etl_with_retry, main
+)
