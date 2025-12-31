@@ -200,7 +200,8 @@ class ODataClient:
         select_fields: Optional[List[str]] = None,
         top: Optional[int] = None,
         skip: Optional[int] = None,
-        orderby: Optional[str] = None
+        orderby: Optional[str] = None,
+        expand: Optional[List[str]] = None
     ) -> str:
         """
         Build OData query URL with parameters.
@@ -212,6 +213,8 @@ class ODataClient:
             top: Maximum number of records to return.
             skip: Number of records to skip.
             orderby: OData $orderby expression.
+            expand: List of related entities to expand (e.g., ['Rooms', 'Media']).
+                    Per Trestle docs, use $expand to maximize data per query.
             
         Returns:
             Complete OData URL with query parameters.
@@ -235,6 +238,9 @@ class ODataClient:
         if orderby:
             params['$orderby'] = orderby
         
+        if expand:
+            params['$expand'] = ','.join(expand)
+        
         if params:
             return f"{base_url}?{urlencode(params)}"
         else:
@@ -247,7 +253,8 @@ class ODataClient:
         select_fields: Optional[List[str]] = None,
         top: Optional[int] = None,
         skip: Optional[int] = None,
-        orderby: Optional[str] = None
+        orderby: Optional[str] = None,
+        expand: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Execute OData query and return results.
@@ -259,6 +266,7 @@ class ODataClient:
             top: Maximum number of records to return.
             skip: Number of records to skip.
             orderby: OData $orderby expression.
+            expand: List of related entities to expand.
             
         Returns:
             OData response as dictionary.
@@ -272,7 +280,8 @@ class ODataClient:
             select_fields=select_fields,
             top=top,
             skip=skip,
-            orderby=orderby
+            orderby=orderby,
+            expand=expand
         )
         
         return self._execute_request(url)
@@ -469,7 +478,9 @@ class ODataClient:
         top: Optional[int] = None,
         skip: Optional[int] = None,
         orderby: Optional[str] = None,
-        max_pages: Optional[int] = None
+        max_pages: Optional[int] = None,
+        expand: Optional[List[str]] = None,
+        throttle_seconds: Optional[float] = None
     ) -> List[Dict[str, Any]]:
         """
         Execute OData query with automatic pagination handling.
@@ -482,6 +493,9 @@ class ODataClient:
             skip: Number of records to skip.
             orderby: OData $orderby expression.
             max_pages: Maximum number of pages to retrieve (None for all).
+            expand: List of related entities to expand.
+            throttle_seconds: Optional delay between page requests to stay within quota.
+                              Per Trestle docs, throttling helps avoid hitting rate limits.
             
         Returns:
             List of all records from all pages.
@@ -492,7 +506,7 @@ class ODataClient:
         all_records = []
         page_count = 0
         
-        # Ensure top doesn't exceed 1000 (API limit)
+        # Ensure top doesn't exceed 1000 (API limit per Trestle docs)
         if top is not None and top > 1000:
             top = 1000
         
@@ -503,7 +517,8 @@ class ODataClient:
             select_fields=select_fields,
             top=top,
             skip=skip,
-            orderby=orderby
+            orderby=orderby,
+            expand=expand
         )
         
         # Process first page
@@ -517,6 +532,10 @@ class ODataClient:
             # Check max_pages limit
             if max_pages is not None and page_count >= max_pages:
                 break
+            
+            # Throttle between requests to stay within quota limits
+            if throttle_seconds and throttle_seconds > 0:
+                time.sleep(throttle_seconds)
             
             next_url = response['@odata.nextLink']
             response = self.execute_url(next_url)

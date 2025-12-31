@@ -245,7 +245,8 @@ class TestIncrementalUpdateEfficiency:
         Feature: trestle-etl-pipeline, Property 13: Incremental Update Efficiency
         
         For any incremental sync, the API query should only request records
-        modified after the last sync timestamp.
+        modified after the last sync timestamp. Per Trestle docs, Media uses
+        PhotosChangeTimestamp while other types use ModificationTimestamp.
         """
         api_config = create_mock_api_config()
         db_config = create_mock_db_config()
@@ -274,8 +275,12 @@ class TestIncrementalUpdateEfficiency:
         filter_expr = call_args.kwargs.get('filter_expr') or call_args[1].get('filter_expr')
         expected_timestamp = last_sync_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
         
+        # Per Trestle docs: Media uses PhotosChangeTimestamp, others use ModificationTimestamp
+        from trestle_etl.incremental_sync import TIMESTAMP_FIELDS
+        expected_field = TIMESTAMP_FIELDS.get(data_type, "ModificationTimestamp")
+        
         assert filter_expr is not None
-        assert f"ModificationTimestamp gt {expected_timestamp}" in filter_expr
+        assert f"{expected_field} gt {expected_timestamp}" in filter_expr
 
 
 class TestRequestBatchingEfficiency:

@@ -46,6 +46,8 @@ class ETLConfig:
     log_level: str = "INFO"
     lock_file_path: str = "/tmp/trestle_etl.lock"
     log_dir: str = "logs"
+    throttle_seconds: float = 0.1  # Delay between paginated requests per Trestle quota guidance
+    use_expand: bool = True  # Use $expand to maximize data per query per Trestle recommendation
 
 
 @dataclass
@@ -183,7 +185,9 @@ class ConfigManager:
             incremental_field=os.getenv("INCREMENTAL_FIELD", "ModificationTimestamp"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             lock_file_path=os.getenv("LOCK_FILE_PATH", "/tmp/trestle_etl.lock"),
-            log_dir=os.getenv("LOG_DIR", "logs")
+            log_dir=os.getenv("LOG_DIR", "logs"),
+            throttle_seconds=float(os.getenv("THROTTLE_SECONDS", "0.1")),
+            use_expand=os.getenv("USE_EXPAND", "true").lower() == "true"
         )
     
     def _load_alert_config(self) -> AlertConfig:

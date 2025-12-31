@@ -378,7 +378,8 @@ class ETLOrchestrator:
             odata_client=self._odata_client,
             mysql_loader=self._mysql_loader,
             incremental_field=self.config.etl.incremental_field,
-            page_size=self.config.etl.batch_size
+            page_size=self.config.etl.batch_size,
+            throttle_seconds=self.config.etl.throttle_seconds
         )
     
     def _cleanup_components(self) -> None:
@@ -460,7 +461,8 @@ class ETLOrchestrator:
             
             batch_result = self._incremental_sync.execute_batched_sync(
                 data_types=sync_data_types,
-                use_incremental=not full_sync
+                use_incremental=not full_sync,
+                use_expand=self.config.etl.use_expand
             )
             
             # Process results for each data type

@@ -28,12 +28,30 @@ class DataType(Enum):
     OFFICE = "Office"
 
 
+# Per Trestle docs: ModificationTimestamp for Property, PhotosChangeTimestamp for Media
+TIMESTAMP_FIELDS = {
+    DataType.PROPERTY: "ModificationTimestamp",
+    DataType.MEDIA: "PhotosChangeTimestamp",  # Lives on Property resource, describes media changes
+    DataType.MEMBER: "ModificationTimestamp",
+    DataType.OFFICE: "ModificationTimestamp",
+}
+
+# Default $expand values per Trestle recommendation to maximize data per query
+DEFAULT_EXPAND = {
+    DataType.PROPERTY: ["Rooms", "Units", "OpenHouse", "CustomProperty", "Media"],
+    DataType.MEDIA: None,  # Media is typically expanded from Property
+    DataType.MEMBER: None,
+    DataType.OFFICE: None,
+}
+
+
 @dataclass
 class BatchRequest:
     """Represents a batched API request."""
     data_type: DataType
     filter_expr: str
     select_fields: Optional[List[str]] = None
+    expand: Optional[List[str]] = None  # Related entities to expand
     priority: int = 0  # Lower number = higher priority
 
 
@@ -81,7 +99,7 @@ class IncrementalSyncManager:
     - Querying last successful sync timestamp from metadata
     - Building OData filters for ModificationTimestamp-based incremental updates
     - Request batching for multiple data types
-    - Cost-optimized API usage
+    - Cost-optimized API usage with $expand and throttling
     """
     
     # Default fields to select for each data type
@@ -89,8 +107,8 @@ class IncrementalSyncManager:
         DataType.PROPERTY: [
             'ListingKey', 'ListPrice', 'PropertyType', 'BedroomsTotal',
             'BathroomsTotalInteger', 'LivingArea', 'LotSizeAcres', 'YearBuilt',
-            'StandardStatus', 'ModificationTimestamp', 'StreetNumber',
-            'StreetName', 'City', 'StateOrProvince', 'PostalCode'
+            'StandardStatus', 'ModificationTimestamp', 'PhotosChangeTimestamp',
+            'StreetNumber', 'StreetName', 'City', 'StateOrProvince', 'PostalCode'
         ],
         DataType.MEDIA: [
             'MediaKey', 'ResourceRecordKey', 'MediaURL', 'MediaType',
@@ -106,12 +124,16 @@ class IncrementalSyncManager:
         ]
     }
     
+    # Default throttle delay between paginated requests (seconds)
+    DEFAULT_THROTTLE_SECONDS = 0.1
+    
     def __init__(
         self,
         odata_client: ODataClient,
         mysql_loader: MySQLLoader,
         incremental_field: str = "ModificationTimestamp",
         page_size: int = 1000,
+        throttle_seconds: float = 0.1,
         logger: Optional[logging.Logger] = None
     ):
         """
@@ -120,14 +142,16 @@ class IncrementalSyncManager:
         Args:
             odata_client: OData client for API communication.
             mysql_loader: MySQL loader for database operations.
-            incremental_field: Field name for incremental updates.
-            page_size: Number of records per API request.
+            incremental_field: Default field name for incremental updates.
+            page_size: Number of records per API request (max 1000 per Trestle).
+            throttle_seconds: Delay between paginated requests to stay within quota.
             logger: Optional logger instance.
         """
         self.odata_client = odata_client
         self.mysql_loader = mysql_loader
         self.incremental_field = incremental_field
         self.page_size = page_size
+        self.throttle_seconds = throttle_seconds
         self.logger = logger or logging.getLogger(__name__)
         self._api_calls_count = 0
     
@@ -147,7 +171,8 @@ class IncrementalSyncManager:
     def build_incremental_filter(
         self,
         last_sync_timestamp: Optional[datetime],
-        additional_filter: Optional[str] = None
+        additional_filter: Optional[str] = None,
+        data_type: Optional[DataType] = None
     ) -> str:
         """
         Build OData filter expression for incremental updates.
@@ -155,6 +180,9 @@ class IncrementalSyncManager:
         Args:
             last_sync_timestamp: Timestamp of last successful sync.
             additional_filter: Optional additional filter to combine.
+            data_type: Data type to determine correct timestamp field.
+                       Per Trestle docs: ModificationTimestamp for Property,
+                       PhotosChangeTimestamp for Media.
             
         Returns:
             OData filter expression string.
@@ -162,9 +190,14 @@ class IncrementalSyncManager:
         filters = []
         
         if last_sync_timestamp:
+            # Use data-type-specific timestamp field per Trestle recommendations
+            timestamp_field = self.incremental_field
+            if data_type and data_type in TIMESTAMP_FIELDS:
+                timestamp_field = TIMESTAMP_FIELDS[data_type]
+            
             # Format timestamp for OData: 2024-01-15T10:30:00Z
             timestamp_str = last_sync_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-            filters.append(f"{self.incremental_field} gt {timestamp_str}")
+            filters.append(f"{timestamp_field} gt {timestamp_str}")
         
         if additional_filter:
             filters.append(additional_filter)
@@ -177,7 +210,8 @@ class IncrementalSyncManager:
         self,
         data_types: List[DataType],
         last_sync_timestamp: Optional[datetime] = None,
-        custom_filters: Optional[Dict[DataType, str]] = None
+        custom_filters: Optional[Dict[DataType, str]] = None,
+        use_expand: bool = True
     ) -> List[BatchRequest]:
         """
         Create batched requests for multiple data types.
@@ -186,6 +220,7 @@ class IncrementalSyncManager:
             data_types: List of data types to sync.
             last_sync_timestamp: Timestamp for incremental filter.
             custom_filters: Optional custom filters per data type.
+            use_expand: Whether to use $expand for related entities (recommended by Trestle).
             
         Returns:
             List of BatchRequest objects ordered by priority.
@@ -205,13 +240,20 @@ class IncrementalSyncManager:
             additional_filter = custom_filters.get(data_type)
             filter_expr = self.build_incremental_filter(
                 last_sync_timestamp, 
-                additional_filter
+                additional_filter,
+                data_type=data_type
             )
+            
+            # Get expand fields if enabled (per Trestle recommendation)
+            expand_fields = None
+            if use_expand:
+                expand_fields = DEFAULT_EXPAND.get(data_type)
             
             request = BatchRequest(
                 data_type=data_type,
                 filter_expr=filter_expr,
                 select_fields=self.DEFAULT_SELECT_FIELDS.get(data_type),
+                expand=expand_fields,
                 priority=priority_map.get(data_type, 99)
             )
             requests.append(request)
@@ -225,7 +267,9 @@ class IncrementalSyncManager:
         data_type: DataType,
         last_sync_timestamp: Optional[datetime] = None,
         additional_filter: Optional[str] = None,
-        select_fields: Optional[List[str]] = None
+        select_fields: Optional[List[str]] = None,
+        expand: Optional[List[str]] = None,
+        use_default_expand: bool = True
     ) -> IncrementalSyncResult:
         """
         Execute incremental sync for a single data type.
@@ -235,6 +279,8 @@ class IncrementalSyncManager:
             last_sync_timestamp: Timestamp for incremental filter.
             additional_filter: Optional additional filter expression.
             select_fields: Optional list of fields to select.
+            expand: Optional list of entities to expand.
+            use_default_expand: Whether to use default $expand if expand not specified.
             
         Returns:
             IncrementalSyncResult with sync statistics.
@@ -242,27 +288,38 @@ class IncrementalSyncManager:
         result = IncrementalSyncResult(data_type=data_type)
         
         try:
-            # Build filter expression
+            # Build filter expression with correct timestamp field for data type
             filter_expr = self.build_incremental_filter(
                 last_sync_timestamp, 
-                additional_filter
+                additional_filter,
+                data_type=data_type
             )
             
             # Use default fields if not specified
             if select_fields is None:
                 select_fields = self.DEFAULT_SELECT_FIELDS.get(data_type)
             
+            # Use default expand if not specified and enabled
+            if expand is None and use_default_expand:
+                expand = DEFAULT_EXPAND.get(data_type)
+            
+            # Get the correct timestamp field for tracking
+            timestamp_field = TIMESTAMP_FIELDS.get(data_type, self.incremental_field)
+            
             self.logger.info(
                 f"Starting incremental sync for {data_type.value} "
                 f"with filter: {filter_expr or 'None (full sync)'}"
+                f"{f', expand: {expand}' if expand else ''}"
             )
             
-            # Execute paginated query
+            # Execute paginated query with throttling
             records = self.odata_client.execute_paginated_query(
                 entity_set=data_type.value,
                 filter_expr=filter_expr if filter_expr else None,
                 select_fields=select_fields,
-                top=self.page_size
+                top=self.page_size,
+                expand=expand,
+                throttle_seconds=self.throttle_seconds
             )
             
             result.records_fetched = len(records)
@@ -271,7 +328,7 @@ class IncrementalSyncManager:
             # Track the latest modification timestamp
             if records:
                 for record in records:
-                    mod_ts = record.get(self.incremental_field)
+                    mod_ts = record.get(timestamp_field)
                     if mod_ts:
                         if isinstance(mod_ts, str):
                             try:
@@ -303,7 +360,8 @@ class IncrementalSyncManager:
         self,
         data_types: List[DataType],
         use_incremental: bool = True,
-        custom_filters: Optional[Dict[DataType, str]] = None
+        custom_filters: Optional[Dict[DataType, str]] = None,
+        use_expand: bool = True
     ) -> BatchSyncResult:
         """
         Execute batched sync for multiple data types.
@@ -311,12 +369,15 @@ class IncrementalSyncManager:
         This method optimizes API usage by:
         - Using incremental updates when possible
         - Processing data types in priority order
+        - Using $expand to fetch related data in fewer queries (per Trestle recommendation)
+        - Throttling requests to stay within quota limits
         - Tracking total API calls across all types
         
         Args:
             data_types: List of data types to sync.
             use_incremental: Whether to use incremental updates.
             custom_filters: Optional custom filters per data type.
+            use_expand: Whether to use $expand for related entities.
             
         Returns:
             BatchSyncResult with results for all data types.
@@ -335,11 +396,12 @@ class IncrementalSyncManager:
             else:
                 self.logger.info("No previous sync found, performing full sync")
         
-        # Create batch requests
+        # Create batch requests with expand support
         requests = self.create_batch_requests(
             data_types=data_types,
             last_sync_timestamp=last_sync_timestamp,
-            custom_filters=custom_filters
+            custom_filters=custom_filters,
+            use_expand=use_expand
         )
         
         # Reset API call counter
@@ -353,7 +415,9 @@ class IncrementalSyncManager:
                 data_type=request.data_type,
                 last_sync_timestamp=last_sync_timestamp,
                 additional_filter=custom_filters.get(request.data_type) if custom_filters else None,
-                select_fields=request.select_fields
+                select_fields=request.select_fields,
+                expand=request.expand,
+                use_default_expand=False  # Already set in request
             )
             
             batch_result.results[request.data_type] = result
