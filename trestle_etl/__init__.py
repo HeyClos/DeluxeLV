@@ -16,3 +16,12 @@ from .cost_monitor import (
     CostMonitor, CostMonitorError, AlertLevel,
     APIUsageRecord, QuotaStatus, UsageReport, CostEstimate
 )
+from .logger import (
+    ETLLogger, LogType, PerformanceMetrics, ETLLogEntry,
+    StructuredFormatter, StandardFormatter, create_etl_logger
+)
+from .alerting import (
+    AlertManager, AlertChannel, EmailAlertChannel, WebhookAlertChannel,
+    Alert, AlertResult, AlertSeverity, AlertType, AlertThreshold,
+    create_alert_manager_from_config
+)
