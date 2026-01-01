@@ -21,7 +21,7 @@ class APIConfig:
     """API configuration settings."""
     client_id: str
     client_secret: str
-    base_url: str = "https://api-prod.corelogic.com/trestle/odata"
+    base_url: str = "https://api.cotality.com/trestle/odata"
     token_url: str = "https://api.cotality.com/trestle/oidc/connect/token"
     timeout: int = 30
 
@@ -161,7 +161,7 @@ class ConfigManager:
         return APIConfig(
             client_id=os.getenv("TRESTLE_CLIENT_ID", ""),
             client_secret=os.getenv("TRESTLE_CLIENT_SECRET", ""),
-            base_url=os.getenv("TRESTLE_API_BASE_URL", "https://api-prod.corelogic.com/trestle/odata"),
+            base_url=os.getenv("TRESTLE_API_BASE_URL", "https://api.cotality.com/trestle/odata"),
             token_url=os.getenv("TRESTLE_TOKEN_URL", "https://api.cotality.com/trestle/oidc/connect/token"),
             timeout=int(os.getenv("TRESTLE_API_TIMEOUT", "30"))
         )
