@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "name": "Check Running ETL Processes",
+  "description": "On each prompt, checks if any trestle_etl processes are already running on the system and alerts the agent so it can inform the user.",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "ps aux | grep '[t]restle_etl' || true",
+    "timeout": 5
+  }
+}
