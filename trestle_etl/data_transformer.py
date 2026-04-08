@@ -5,6 +5,7 @@ Handles field normalization, data type conversion, and validation
 for transforming OData API responses into MySQL-compatible format.
 """
 
+import math
 import re
 import logging
 from datetime import datetime
@@ -225,16 +226,22 @@ class DataTransformer:
                 if isinstance(value, int):
                     return value
                 elif isinstance(value, (float, Decimal)):
+                    float_val = float(value)
+                    if not math.isfinite(float_val):
+                        raise DataTransformationError(f"Cannot convert non-finite value to integer: {value}")
                     # Convert to int, but check for precision loss
                     int_val = int(value)
-                    if abs(float(value) - int_val) > 0.001:  # Allow small floating point errors
+                    if abs(float_val - int_val) > 0.001:  # Allow small floating point errors
                         self.logger.warning(f"Precision loss converting {field_name}: {value} -> {int_val}")
                     return int_val
                 elif isinstance(value, str):
                     # Try to parse string as integer
                     cleaned = value.strip().replace(',', '')  # Remove commas
                     if cleaned:
-                        return int(float(cleaned))  # Parse as float first to handle "123.0"
+                        float_val = float(cleaned)
+                        if not math.isfinite(float_val):
+                            raise DataTransformationError(f"Cannot convert non-finite value to integer: {value}")
+                        return int(float_val)  # Parse as float first to handle "123.0"
                     else:
                         return None
                 else:

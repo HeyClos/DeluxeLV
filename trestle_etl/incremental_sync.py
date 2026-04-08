@@ -38,7 +38,7 @@ TIMESTAMP_FIELDS = {
 
 # Default $expand values per Trestle recommendation to maximize data per query
 DEFAULT_EXPAND = {
-    DataType.PROPERTY: ["Rooms", "Units", "OpenHouse", "CustomProperty", "Media"],
+    DataType.PROPERTY: ["Rooms", "UnitTypes", "OpenHouse", "CustomProperty", "Media"],
     DataType.MEDIA: None,  # Media is typically expanded from Property
     DataType.MEMBER: None,
     DataType.OFFICE: None,

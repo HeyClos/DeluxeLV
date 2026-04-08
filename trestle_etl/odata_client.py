@@ -219,7 +219,8 @@ class ODataClient:
         Returns:
             Complete OData URL with query parameters.
         """
-        base_url = urljoin(self.config.base_url, entity_set)
+        api_base = self.config.base_url.rstrip('/') + '/'
+        base_url = urljoin(api_base, entity_set)
         
         params = {}
         
