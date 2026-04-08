@@ -446,6 +446,9 @@ class AlertManager:
         """
         Send an alert through configured channels.
         
+        If all channels fail (or none are configured), the alert is written
+        to a local fallback log file so it is never silently lost.
+        
         Args:
             alert: Alert to send.
             channels: Optional list of specific channels to use.
@@ -467,10 +470,12 @@ class AlertManager:
             target_channels = [c for c in self._channels if c.channel_name in channels]
         
         if not target_channels:
-            self.logger.warning("No alert channels configured")
+            self.logger.warning("No alert channels configured, writing to fallback log")
+            self._write_fallback_log(alert)
             return results
         
         # Send to each channel
+        any_success = False
         for channel in target_channels:
             try:
                 result = channel.send(alert)
@@ -478,6 +483,7 @@ class AlertManager:
                 self._alert_history.append(result)
                 
                 if result.success:
+                    any_success = True
                     self.logger.info(f"Alert sent via {channel.channel_name}: {alert.title}")
                 else:
                     self.logger.error(
@@ -494,10 +500,43 @@ class AlertManager:
                 self._alert_history.append(error_result)
                 self.logger.error(f"Exception sending alert via {channel.channel_name}: {e}")
         
+        # If every channel failed, write to fallback log
+        if not any_success:
+            self._write_fallback_log(alert)
+        
         # Update suppression
         self._suppressed_alerts[suppression_key] = datetime.now()
         
         return results
+    
+    def _write_fallback_log(self, alert: Alert) -> None:
+        """
+        Write an alert to a local fallback log file as a last resort.
+        
+        This ensures alerts are never silently lost when all delivery
+        channels are unavailable.
+        """
+        try:
+            fallback_logger = logging.getLogger("trestle_etl.alerts.fallback")
+            if not fallback_logger.handlers:
+                handler = logging.FileHandler("alerts_fallback.log")
+                handler.setFormatter(logging.Formatter(
+                    "%(asctime)s | %(levelname)s | %(message)s"
+                ))
+                fallback_logger.addHandler(handler)
+                fallback_logger.setLevel(logging.WARNING)
+            
+            fallback_logger.warning(
+                f"[{alert.severity.value.upper()}] {alert.alert_type.value}: "
+                f"{alert.title} — {alert.message} | context={alert.context}"
+            )
+        except Exception as e:
+            # Absolute last resort — stderr
+            import sys
+            print(
+                f"ALERT FALLBACK FAILED: {alert.title} — {alert.message} (log error: {e})",
+                file=sys.stderr,
+            )
     
     def _is_suppressed(self, key: str) -> bool:
         """Check if an alert is currently suppressed."""

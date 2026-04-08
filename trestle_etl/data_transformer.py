@@ -115,6 +115,11 @@ class DataTransformer:
         'postal_code': (str, type(None))
     }
     
+    # Maximum number of entries in the field name cache before eviction
+    MAX_FIELD_NAME_CACHE_SIZE = 10_000
+    # Maximum number of entries in the duplicate key tracker before eviction
+    MAX_DUPLICATE_KEYS_SIZE = 1_000_000
+
     def __init__(self, logger: Optional[logging.Logger] = None):
         """
         Initialize DataTransformer.
@@ -190,7 +195,12 @@ class DataTransformer:
             # Emergency truncation if somehow we're still over
             normalized = normalized[:64]
         
-        # Cache the result
+        # Cache the result (with eviction to prevent unbounded growth)
+        if len(self._field_name_cache) >= self.MAX_FIELD_NAME_CACHE_SIZE:
+            self.logger.warning(
+                f"Field name cache reached {self.MAX_FIELD_NAME_CACHE_SIZE} entries, clearing"
+            )
+            self._field_name_cache.clear()
         self._field_name_cache[field_name] = normalized
         
         return normalized
@@ -406,7 +416,12 @@ class DataTransformer:
         if listing_key in self._duplicate_keys:
             return True
         
-        # Add to internal tracking
+        # Add to internal tracking (with eviction to prevent unbounded growth)
+        if len(self._duplicate_keys) >= self.MAX_DUPLICATE_KEYS_SIZE:
+            self.logger.warning(
+                f"Duplicate key cache reached {self.MAX_DUPLICATE_KEYS_SIZE} entries, clearing"
+            )
+            self._duplicate_keys.clear()
         self._duplicate_keys.add(listing_key)
         return False
     

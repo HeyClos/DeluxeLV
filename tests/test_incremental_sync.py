@@ -64,10 +64,11 @@ data_types_list_strategy = st.lists(
     unique=True
 )
 
-# Strategy for generating filter expressions
+# Strategy for generating filter expressions (valid OData characters only)
 filter_expr_strategy = st.one_of(
     st.none(),
-    st.text(min_size=1, max_size=100)
+    st.from_regex(r"[A-Za-z][A-Za-z0-9_]+ (eq|ne|gt|lt|ge|le) '[A-Za-z0-9 ]+'", fullmatch=True),
+    st.from_regex(r"[A-Za-z][A-Za-z0-9_]+ (eq|ne|gt|lt|ge|le) [0-9]+", fullmatch=True),
 )
 
 

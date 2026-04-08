@@ -263,6 +263,10 @@ class ExecutionLock:
         """
         Get information about the current lock holder.
         
+        Reads the lock file to retrieve PID and timestamp. Since the lock
+        holder writes PID and timestamp atomically via flush, a partial
+        read is unlikely but handled gracefully.
+        
         Returns:
             Dictionary with PID and timestamp, or None if no lock.
         """
@@ -271,12 +275,17 @@ class ExecutionLock:
         
         try:
             with open(self.lock_file_path, 'r') as f:
-                lines = f.readlines()
+                content = f.read()
+                lines = content.strip().splitlines()
                 if len(lines) >= 2:
-                    return {
-                        'pid': lines[0].strip(),
-                        'timestamp': lines[1].strip()
-                    }
+                    pid = lines[0].strip()
+                    timestamp = lines[1].strip()
+                    # Validate we got complete data (not a partial write)
+                    if pid and timestamp:
+                        return {
+                            'pid': pid,
+                            'timestamp': timestamp
+                        }
         except (IOError, OSError):
             pass
         return None

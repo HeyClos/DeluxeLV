@@ -6,8 +6,10 @@ for the CoreLogic Trestle API.
 """
 
 import json
+import re
 import time
 import random
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union
 from urllib.parse import urlencode, urljoin
@@ -30,6 +32,25 @@ class ODataError(Exception):
 class RateLimitError(Exception):
     """Raised when rate limits are exceeded."""
     pass
+
+
+class CircuitBreakerOpenError(ODataError):
+    """Raised when the circuit breaker is open and requests are being fast-failed."""
+    pass
+
+
+# Regex for validating OData filter expressions.
+# Allows alphanumeric field names, common operators, quoted strings,
+# datetime literals, parentheses, and logical connectors.
+_ODATA_FILTER_PATTERN = re.compile(
+    r"^[\w\s\.\,\(\)\'\"\-\:\/\+\=\!\<\>\*\@\$TZtz]+$"
+)
+
+# Characters/sequences that should never appear in a filter expression
+_ODATA_FILTER_BLOCKLIST = [
+    ';', '--', '/*', '*/', 'DROP ', 'DELETE ', 'INSERT ', 'UPDATE ',
+    'EXEC ', 'EXECUTE ', 'xp_', 'sp_',
+]
 
 
 class TokenCache:
@@ -58,6 +79,65 @@ class TokenCache:
         self._expires_at = None
 
 
+class CircuitBreaker:
+    """
+    Circuit breaker to fast-fail when the API is consistently unavailable.
+    
+    States:
+        CLOSED  — requests flow normally, failures are counted.
+        OPEN    — requests are immediately rejected for a cooldown period.
+        HALF_OPEN — a single probe request is allowed through to test recovery.
+    """
+    
+    STATE_CLOSED = "closed"
+    STATE_OPEN = "open"
+    STATE_HALF_OPEN = "half_open"
+    
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 60.0,
+        logger: Optional[logging.Logger] = None,
+    ):
+        self._failure_threshold = failure_threshold
+        self._recovery_timeout = recovery_timeout
+        self._logger = logger or logging.getLogger(__name__)
+        
+        self._state = self.STATE_CLOSED
+        self._failure_count = 0
+        self._last_failure_time: Optional[datetime] = None
+    
+    @property
+    def state(self) -> str:
+        """Return the current circuit breaker state, transitioning to HALF_OPEN if the cooldown has elapsed."""
+        if self._state == self.STATE_OPEN and self._last_failure_time:
+            elapsed = (datetime.now() - self._last_failure_time).total_seconds()
+            if elapsed >= self._recovery_timeout:
+                self._state = self.STATE_HALF_OPEN
+        return self._state
+    
+    def allow_request(self) -> bool:
+        """Return True if a request should be allowed through."""
+        current = self.state
+        return current in (self.STATE_CLOSED, self.STATE_HALF_OPEN)
+    
+    def record_success(self) -> None:
+        """Record a successful request, resetting the breaker to CLOSED."""
+        self._failure_count = 0
+        self._state = self.STATE_CLOSED
+    
+    def record_failure(self) -> None:
+        """Record a failed request, potentially tripping the breaker to OPEN."""
+        self._failure_count += 1
+        self._last_failure_time = datetime.now()
+        if self._failure_count >= self._failure_threshold:
+            self._state = self.STATE_OPEN
+            self._logger.warning(
+                f"Circuit breaker OPEN after {self._failure_count} consecutive failures. "
+                f"Requests will be fast-failed for {self._recovery_timeout}s."
+            )
+
+
 class ODataClient:
     """
     OData client for CoreLogic Trestle API.
@@ -83,6 +163,11 @@ class ODataClient:
         self._session.timeout = config.timeout
         self._quota_info = {}
         self._last_quota_check = None
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=5,
+            recovery_timeout=60.0,
+            logger=logging.getLogger(__name__),
+        )
     
     def authenticate(self) -> str:
         """
@@ -193,6 +278,31 @@ class ODataClient:
         except requests.RequestException as e:
             raise ODataError(f"Network error during metadata request: {str(e)}")
     
+    def _validate_filter_expression(self, filter_expr: str) -> None:
+        """
+        Validate an OData $filter expression for safety and basic correctness.
+        
+        Args:
+            filter_expr: The filter expression to validate.
+            
+        Raises:
+            ODataError: If the filter expression is invalid or potentially dangerous.
+        """
+        if not filter_expr or not filter_expr.strip():
+            raise ODataError("Empty filter expression")
+        
+        # Check against blocklist
+        upper = filter_expr.upper()
+        for blocked in _ODATA_FILTER_BLOCKLIST:
+            if blocked.upper() in upper:
+                raise ODataError(f"Filter expression contains blocked sequence: {blocked.strip()}")
+        
+        # Check character set
+        if not _ODATA_FILTER_PATTERN.match(filter_expr):
+            raise ODataError(
+                f"Filter expression contains invalid characters: {filter_expr!r}"
+            )
+
     def build_odata_url(
         self,
         entity_set: str,
@@ -225,6 +335,8 @@ class ODataClient:
         params = {}
         
         if filter_expr:
+            # Validate filter expression to catch malformed/dangerous input early
+            self._validate_filter_expression(filter_expr)
             params['$filter'] = filter_expr
         
         if select_fields:
@@ -348,7 +460,10 @@ class ODataClient:
     
     def _execute_with_retry(self, url: str) -> Dict[str, Any]:
         """
-        Execute HTTP request with retry logic for rate limits.
+        Execute HTTP request with retry logic for rate limits and transient server errors.
+        
+        Integrates with the circuit breaker to fast-fail when the API is
+        consistently unavailable, and retries on 429 and 5xx responses.
         
         Args:
             url: URL to request.
@@ -359,8 +474,18 @@ class ODataClient:
         Raises:
             ODataError: If request fails after all retries.
             RateLimitError: If rate limits are consistently exceeded.
+            CircuitBreakerOpenError: If the circuit breaker is open.
         """
+        # Check circuit breaker before attempting
+        if not self._circuit_breaker.allow_request():
+            raise CircuitBreakerOpenError(
+                "Circuit breaker is OPEN — API requests are being fast-failed. "
+                "The API has been consistently unavailable. Will retry automatically "
+                f"after cooldown period."
+            )
+        
         last_exception = None
+        retryable_status_codes = {'429', '500', '502', '503', '504'}
         
         for attempt in range(self.max_retries + 1):
             try:
@@ -371,25 +496,32 @@ class ODataClient:
                     self._quota_info = self.get_quota_info(response['_response_headers'])
                     self._last_quota_check = datetime.now()
                 
+                # Success — record it on the circuit breaker
+                self._circuit_breaker.record_success()
                 return response
                 
             except ODataError as e:
                 last_exception = e
+                error_str = str(e)
                 
-                # Check if this is a rate limit error (429)
-                if "Rate limit exceeded" in str(e) or "429" in str(e):
-                    if attempt < self.max_retries:
-                        # Calculate backoff delay
-                        delay = self._calculate_backoff_delay(attempt)
-                        
-                        # Wait before retry
-                        time.sleep(delay)
-                        continue
-                    else:
-                        # Max retries exceeded for rate limit
-                        raise RateLimitError(f"Rate limit exceeded after {self.max_retries} retries: {str(e)}")
+                # Determine if this is a retryable error
+                is_rate_limit = "Rate limit exceeded" in error_str or "429" in error_str
+                is_server_error = any(code in error_str for code in ('500', '502', '503', '504'))
+                is_retryable = is_rate_limit or is_server_error
+                
+                # Record failure on the circuit breaker for server errors
+                if is_server_error:
+                    self._circuit_breaker.record_failure()
+                
+                if is_retryable and attempt < self.max_retries:
+                    delay = self._calculate_backoff_delay(attempt)
+                    time.sleep(delay)
+                    continue
+                elif is_rate_limit:
+                    raise RateLimitError(
+                        f"Rate limit exceeded after {self.max_retries} retries: {error_str}"
+                    )
                 else:
-                    # Non-rate-limit error, don't retry
                     raise
         
         # Should not reach here, but just in case
@@ -449,7 +581,12 @@ class ODataClient:
                 raise ODataError(f"Resource not found (404): {url}")
             elif response.status_code == 429:
                 # Rate limit - include response text for retry logic
-                raise ODataError(f"Rate limit exceeded: {response.text}")
+                raise ODataError(f"Rate limit exceeded (429): {response.text}")
+            elif 500 <= response.status_code < 600:
+                # Server error - retryable
+                raise ODataError(
+                    f"Server error ({response.status_code}): {response.text}"
+                )
             else:
                 raise ODataError(f"Request failed: {response.status_code} - {response.text}")
                 

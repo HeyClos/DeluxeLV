@@ -221,14 +221,23 @@ class MySQLLoader:
         """
         Context manager for database connection.
         
+        Validates the connection is alive before yielding. If the connection
+        is in a bad state, it reconnects automatically.
+        
         Yields:
             Active database connection.
         """
         connection = self.get_connection()
         try:
+            # Validate the connection is still alive
+            connection.ping(reconnect=True)
             yield connection
-        finally:
-            pass  # Keep connection open for reuse
+        except pymysql.OperationalError:
+            # Connection is dead — reconnect and retry
+            self.logger.warning("Database connection lost, reconnecting...")
+            self._connection = None
+            connection = self.get_connection()
+            yield connection
     
     def close_connection(self) -> None:
         """Close the database connection."""

@@ -51,10 +51,11 @@ field_name_strategy = st.text(
     max_size=50
 )
 
-# Strategy for generating OData filter expressions
+# Strategy for generating OData filter expressions (valid OData characters only)
 filter_expr_strategy = st.one_of(
     st.none(),
-    st.text(min_size=1, max_size=200)
+    st.from_regex(r"[A-Za-z][A-Za-z0-9_]+ (eq|ne|gt|lt|ge|le) '[A-Za-z0-9 ]+'", fullmatch=True),
+    st.from_regex(r"[A-Za-z][A-Za-z0-9_]+ (eq|ne|gt|lt|ge|le) [0-9]+", fullmatch=True),
 )
 
 # Strategy for generating select field lists
@@ -466,14 +467,15 @@ class TestResponseValidationAndErrorHandling:
 
     @given(
         entity_set=entity_set_strategy,
-        status_code=st.sampled_from([400, 404, 500, 503])
+        status_code=st.sampled_from([400, 404, 403])
     )
     @settings(max_examples=20)
     def test_http_error_responses_raise_odata_error(self, entity_set, status_code):
         """
         Feature: trestle-etl-pipeline, Property 4: Response Validation and Error Handling
         
-        For any HTTP error response, should raise appropriate ODataError.
+        For any non-retryable HTTP error response, should raise appropriate ODataError
+        immediately without retrying.
         """
         config = create_mock_config()
         client = ODataClient(config)
@@ -938,15 +940,15 @@ class TestExponentialBackoffRetryLogic:
 
     @given(
         entity_set=entity_set_strategy,
-        non_rate_limit_status=st.sampled_from([400, 404, 500, 503])
+        non_rate_limit_status=st.sampled_from([400, 404, 403])
     )
     @settings(max_examples=20)
     def test_non_rate_limit_errors_do_not_retry(self, entity_set, non_rate_limit_status):
         """
         Feature: trestle-etl-pipeline, Property 3: Exponential Backoff Retry Logic
         
-        For any non-rate-limit error, the system should not retry and should 
-        raise ODataError immediately.
+        For any non-retryable error (client errors other than 429), the system
+        should not retry and should raise ODataError immediately.
         """
         config = create_mock_config()
         client = ODataClient(config, max_retries=3, base_delay=0.01)
