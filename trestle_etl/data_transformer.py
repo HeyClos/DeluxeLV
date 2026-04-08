@@ -158,8 +158,14 @@ class DataTransformer:
         if field_name in self._field_name_cache:
             return self._field_name_cache[field_name]
         
+        # Convert CamelCase to snake_case first
+        # Insert underscore before uppercase letters that follow lowercase letters or digits
+        normalized = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', field_name)
+        # Handle consecutive uppercase letters (e.g., "HTMLParser" -> "HTML_Parser")
+        normalized = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', normalized)
+        
         # Convert to lowercase and replace non-alphanumeric with underscores
-        normalized = re.sub(r'[^a-zA-Z0-9_]', '_', field_name.lower())
+        normalized = re.sub(r'[^a-zA-Z0-9_]', '_', normalized.lower())
         
         # Remove multiple consecutive underscores
         normalized = re.sub(r'_+', '_', normalized)
@@ -275,7 +281,15 @@ class DataTransformer:
                 if isinstance(value, datetime):
                     return value
                 elif isinstance(value, str):
-                    # Try common datetime formats
+                    # Try Python's built-in ISO 8601 parser first (handles timezone offsets)
+                    try:
+                        dt = datetime.fromisoformat(value)
+                        # Strip timezone info for MySQL DATETIME compatibility
+                        return dt.replace(tzinfo=None)
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    # Fall back to manual format parsing
                     formats = [
                         '%Y-%m-%dT%H:%M:%S.%fZ',  # ISO format with microseconds
                         '%Y-%m-%dT%H:%M:%SZ',     # ISO format
