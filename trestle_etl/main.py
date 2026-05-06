@@ -520,7 +520,16 @@ class ETLOrchestrator:
             
             # Complete sync run
             if self._sync_run and not dry_run:
-                self._sync_run.last_sync_timestamp = datetime.now()
+                # Use the max ModificationTimestamp from the API response rather than
+                # datetime.now(). This ensures the next incremental sync filters from
+                # the actual data watermark, not the wall-clock time of this run.
+                max_api_timestamp = None
+                for sync_result in batch_result.results.values():
+                    if sync_result.last_modification_timestamp:
+                        if max_api_timestamp is None or sync_result.last_modification_timestamp > max_api_timestamp:
+                            max_api_timestamp = sync_result.last_modification_timestamp
+                
+                self._sync_run.last_sync_timestamp = max_api_timestamp or datetime.now()
                 self._mysql_loader.complete_sync_run(
                     self._sync_run,
                     status=SyncStatus.SUCCESS if not results['errors'] else SyncStatus.PARTIAL,
