@@ -319,6 +319,9 @@ class TestUpsertBehaviorCorrectness:
         config = create_mock_config()
         loader = MySQLLoader(config)
         
+        # Pre-set DB columns to avoid information_schema query
+        loader._db_columns = set(loader.PROPERTY_FIELDS)
+        
         # Mock the connection and cursor
         mock_cursor = MagicMock()
         mock_cursor.rowcount = len(unique_records)
