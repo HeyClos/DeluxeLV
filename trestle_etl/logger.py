@@ -559,6 +559,15 @@ class ETLLogger:
         # Also log to error log
         self._log_error(error, context)
     
+    def log_info(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
+        """Log an informational message."""
+        self._log_with_context(
+            LogType.MAIN,
+            logging.INFO,
+            message,
+            context
+        )
+    
     # Error logging methods
     def _log_error(
         self,

@@ -43,20 +43,21 @@ listing_key_strategy = st.text(
 
 # Strategy for generating valid property records
 property_record_strategy = st.fixed_dictionaries({
-    'listing_key': listing_key_strategy,
-    'list_price': st.one_of(st.none(), st.integers(min_value=0, max_value=10000000)),
-    'property_type': st.one_of(st.none(), st.sampled_from(['Residential', 'Commercial', 'Land', 'Multi-Family'])),
-    'bedrooms_total': st.one_of(st.none(), st.integers(min_value=0, max_value=20)),
-    'bathrooms_total': st.one_of(st.none(), st.floats(min_value=0, max_value=10, allow_nan=False)),
-    'square_feet': st.one_of(st.none(), st.integers(min_value=100, max_value=50000)),
-    'lot_size_acres': st.one_of(st.none(), st.floats(min_value=0, max_value=1000, allow_nan=False)),
-    'year_built': st.one_of(st.none(), st.integers(min_value=1800, max_value=2025)),
-    'listing_status': st.one_of(st.none(), st.sampled_from(['Active', 'Pending', 'Sold', 'Withdrawn'])),
-    'modification_timestamp': st.datetimes(min_value=datetime(2020, 1, 1), max_value=datetime(2025, 12, 31)),
-    'street_address': st.one_of(st.none(), st.text(min_size=1, max_size=100)),
-    'city': st.one_of(st.none(), st.text(min_size=1, max_size=50)),
-    'state_or_province': st.one_of(st.none(), st.sampled_from(['CA', 'TX', 'FL', 'NY', 'WA'])),
-    'postal_code': st.one_of(st.none(), st.text(alphabet=st.sampled_from("0123456789"), min_size=5, max_size=10))
+    'ListingKey': listing_key_strategy,
+    'ListPrice': st.one_of(st.none(), st.integers(min_value=0, max_value=10000000)),
+    'PropertyType': st.one_of(st.none(), st.sampled_from(['Residential', 'Commercial', 'Land', 'Multi-Family'])),
+    'BedroomsTotal': st.one_of(st.none(), st.integers(min_value=0, max_value=20)),
+    'BathroomsTotalInteger': st.one_of(st.none(), st.floats(min_value=0, max_value=10, allow_nan=False)),
+    'LivingArea': st.one_of(st.none(), st.integers(min_value=100, max_value=50000)),
+    'LotSizeAcres': st.one_of(st.none(), st.floats(min_value=0, max_value=1000, allow_nan=False)),
+    'YearBuilt': st.one_of(st.none(), st.integers(min_value=1800, max_value=2025)),
+    'StandardStatus': st.one_of(st.none(), st.sampled_from(['Active', 'Pending', 'Sold', 'Withdrawn'])),
+    'ModificationTimestamp': st.datetimes(min_value=datetime(2020, 1, 1), max_value=datetime(2025, 12, 31)),
+    'StreetNumber': st.one_of(st.none(), st.text(min_size=1, max_size=10)),
+    'StreetName': st.one_of(st.none(), st.text(min_size=1, max_size=100)),
+    'City': st.one_of(st.none(), st.text(min_size=1, max_size=50)),
+    'StateOrProvince': st.one_of(st.none(), st.sampled_from(['CA', 'TX', 'FL', 'NY', 'WA'])),
+    'PostalCode': st.one_of(st.none(), st.text(alphabet=st.sampled_from("0123456789"), min_size=5, max_size=10))
 })
 
 
@@ -87,8 +88,8 @@ class TestBatchOperationUsage:
         seen_keys = set()
         unique_records = []
         for record in records:
-            if record['listing_key'] not in seen_keys:
-                seen_keys.add(record['listing_key'])
+            if record['ListingKey'] not in seen_keys:
+                seen_keys.add(record['ListingKey'])
                 unique_records.append(record)
         
         assume(len(unique_records) > 0)
@@ -134,8 +135,8 @@ class TestBatchOperationUsage:
         seen_keys = set()
         unique_records = []
         for record in records:
-            if record['listing_key'] not in seen_keys:
-                seen_keys.add(record['listing_key'])
+            if record['ListingKey'] not in seen_keys:
+                seen_keys.add(record['ListingKey'])
                 unique_records.append(record)
         
         assume(len(unique_records) > 0)
@@ -204,8 +205,8 @@ class TestBatchOperationUsage:
         seen_keys = set()
         unique_records = []
         for record in records:
-            if record['listing_key'] not in seen_keys:
-                seen_keys.add(record['listing_key'])
+            if record['ListingKey'] not in seen_keys:
+                seen_keys.add(record['ListingKey'])
                 unique_records.append(record)
         
         assume(len(unique_records) >= batch_size)  # Ensure we have enough for multiple batches
@@ -260,17 +261,17 @@ class TestUpsertBehaviorCorrectness:
         
         # Create initial and updated records
         initial_record = {
-            'listing_key': listing_key,
-            'list_price': initial_price,
-            'property_type': 'Residential',
-            'modification_timestamp': datetime.now()
+            'ListingKey': listing_key,
+            'ListPrice': initial_price,
+            'PropertyType': 'Residential',
+            'ModificationTimestamp': datetime.now()
         }
         
         updated_record = {
-            'listing_key': listing_key,
-            'list_price': updated_price,
-            'property_type': 'Commercial',
-            'modification_timestamp': datetime.now()
+            'ListingKey': listing_key,
+            'ListPrice': updated_price,
+            'PropertyType': 'Commercial',
+            'ModificationTimestamp': datetime.now()
         }
         
         # Mock the connection and cursor
@@ -309,8 +310,8 @@ class TestUpsertBehaviorCorrectness:
         seen_keys = set()
         unique_records = []
         for record in records:
-            if record['listing_key'] not in seen_keys:
-                seen_keys.add(record['listing_key'])
+            if record['ListingKey'] not in seen_keys:
+                seen_keys.add(record['ListingKey'])
                 unique_records.append(record)
         
         assume(len(unique_records) > 0)
@@ -334,14 +335,14 @@ class TestUpsertBehaviorCorrectness:
             sql = call_args[0][0]
             
             # Verify all non-key fields are in the UPDATE clause
-            update_fields = [f for f in loader.PROPERTY_FIELDS if f != 'listing_key']
+            update_fields = [f for f in loader.PROPERTY_FIELDS if f != 'ListingKey']
             for field in update_fields:
                 assert f"{field} = VALUES({field})" in sql, \
                     f"Field {field} should be in UPDATE clause"
             
-            # Verify listing_key is NOT in the UPDATE clause (it's the primary key)
-            assert "listing_key = VALUES(listing_key)" not in sql, \
-                "listing_key should not be in UPDATE clause"
+            # Verify ListingKey is NOT in the UPDATE clause (it's the primary key)
+            assert "ListingKey = VALUES(ListingKey)" not in sql, \
+                "ListingKey should not be in UPDATE clause"
     
     @given(
         listing_key=listing_key_strategy,
@@ -361,10 +362,10 @@ class TestUpsertBehaviorCorrectness:
         # Create multiple records with same key but different prices
         records = [
             {
-                'listing_key': listing_key,
-                'list_price': price,
-                'property_type': 'Residential',
-                'modification_timestamp': datetime.now() + timedelta(hours=i)
+                'ListingKey': listing_key,
+                'ListPrice': price,
+                'PropertyType': 'Residential',
+                'ModificationTimestamp': datetime.now() + timedelta(hours=i)
             }
             for i, price in enumerate(prices)
         ]
@@ -402,8 +403,8 @@ class TestUpsertBehaviorCorrectness:
         seen_keys = set()
         unique_records = []
         for record in records:
-            if record['listing_key'] not in seen_keys:
-                seen_keys.add(record['listing_key'])
+            if record['ListingKey'] not in seen_keys:
+                seen_keys.add(record['ListingKey'])
                 unique_records.append(record)
         
         assume(len(unique_records) > 0)
@@ -416,7 +417,7 @@ class TestUpsertBehaviorCorrectness:
         
         # Mock the connection and cursor
         mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = [{'listing_key': k} for k in existing_keys]
+        mock_cursor.fetchall.return_value = [{'ListingKey': k} for k in existing_keys]
         mock_cursor.rowcount = len(unique_records)
         mock_connection = MagicMock()
         mock_connection.cursor.return_value.__enter__ = Mock(return_value=mock_cursor)

@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "name": "Code Quality Review",
+  "description": "Analyzes modified source code for potential improvements including code smells, design patterns, and best practices. Generates suggestions for improving code quality while maintaining existing functionality, focusing on readability, maintainability, and performance optimizations.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.py",
+      "*.ts",
+      "*.js",
+      "*.tsx",
+      "*.jsx",
+      "*.java",
+      "*.go",
+      "*.rs",
+      "*.rb",
+      "*.cpp",
+      "*.c",
+      "*.h",
+      "*.cs"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Analyze the modified code for potential improvements. Look for: 1) Code smells (long methods, duplicated code, dead code, overly complex conditionals). 2) Design pattern opportunities (where patterns could simplify or improve the code). 3) Best practices violations (naming conventions, error handling, separation of concerns). 4) Readability improvements (clearer variable names, better comments, simplified logic). 5) Maintainability concerns (tight coupling, missing abstractions, hard-coded values). 6) Performance optimizations (unnecessary iterations, inefficient data structures, redundant operations). Provide specific, actionable suggestions while ensuring the existing functionality is preserved. Keep suggestions concise and prioritized by impact."
+  }
+}

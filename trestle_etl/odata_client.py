@@ -608,6 +608,84 @@ class ODataClient:
         """
         return self._execute_with_retry(url)
     
+    def execute_paginated_query_streaming(
+        self,
+        entity_set: str,
+        filter_expr: Optional[str] = None,
+        select_fields: Optional[List[str]] = None,
+        top: Optional[int] = None,
+        skip: Optional[int] = None,
+        orderby: Optional[str] = None,
+        max_pages: Optional[int] = None,
+        expand: Optional[List[str]] = None,
+        throttle_seconds: Optional[float] = None
+    ):
+        """
+        Execute OData query with automatic pagination, yielding one page at a time.
+        
+        This is a generator that yields batches of records as they arrive from
+        the API, avoiding loading the entire result set into memory. Ideal for
+        large syncs (hundreds of thousands to millions of records).
+        
+        Args:
+            entity_set: The OData entity set name.
+            filter_expr: OData $filter expression.
+            select_fields: List of fields to select.
+            top: Maximum number of records per page (up to 1000).
+            skip: Number of records to skip.
+            orderby: OData $orderby expression.
+            max_pages: Maximum number of pages to retrieve (None for all).
+            expand: List of related entities to expand.
+            throttle_seconds: Optional delay between page requests to stay within quota.
+            
+        Yields:
+            List[Dict[str, Any]]: A page of records (up to `top` records per page).
+            
+        Raises:
+            ODataError: If query execution fails.
+        """
+        page_count = 0
+        
+        # Ensure top doesn't exceed 1000 (API limit per Trestle docs)
+        if top is not None and top > 1000:
+            top = 1000
+        
+        # Execute initial query
+        response = self.execute_query(
+            entity_set=entity_set,
+            filter_expr=filter_expr,
+            select_fields=select_fields,
+            top=top,
+            skip=skip,
+            orderby=orderby,
+            expand=expand
+        )
+        
+        # Yield first page
+        if 'value' in response and response['value']:
+            yield response['value']
+        
+        page_count += 1
+        
+        # Handle pagination with @odata.nextLink
+        while '@odata.nextLink' in response:
+            # Check max_pages limit
+            if max_pages is not None and page_count >= max_pages:
+                break
+            
+            # Throttle between requests to stay within quota limits
+            if throttle_seconds and throttle_seconds > 0:
+                time.sleep(throttle_seconds)
+            
+            next_url = response['@odata.nextLink']
+            response = self.execute_url(next_url)
+            
+            # Yield next page
+            if 'value' in response and response['value']:
+                yield response['value']
+            
+            page_count += 1
+
     def execute_paginated_query(
         self,
         entity_set: str,

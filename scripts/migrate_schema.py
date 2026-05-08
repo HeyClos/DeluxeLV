@@ -43,27 +43,28 @@ MIGRATIONS: List[Tuple[int, str, str, str]] = [
         "Create properties table",
         """
         CREATE TABLE IF NOT EXISTS properties (
-            listing_key VARCHAR(255) PRIMARY KEY,
-            list_price DECIMAL(12,2),
-            property_type VARCHAR(100),
-            bedrooms_total INT,
-            bathrooms_total DECIMAL(3,1),
-            square_feet INT,
-            lot_size_acres DECIMAL(10,4),
-            year_built INT,
-            listing_status VARCHAR(50),
-            modification_timestamp DATETIME,
-            street_address VARCHAR(255),
-            city VARCHAR(100),
-            state_or_province VARCHAR(50),
-            postal_code VARCHAR(20),
+            ListingKey VARCHAR(255) PRIMARY KEY,
+            ListPrice DECIMAL(12,2),
+            PropertyType VARCHAR(100),
+            BedroomsTotal INT,
+            BathroomsTotalInteger DECIMAL(3,1),
+            LivingArea INT,
+            LotSizeAcres DECIMAL(10,4),
+            YearBuilt INT,
+            StandardStatus VARCHAR(50),
+            ModificationTimestamp DATETIME,
+            StreetNumber VARCHAR(50),
+            StreetName VARCHAR(200),
+            City VARCHAR(100),
+            StateOrProvince VARCHAR(50),
+            PostalCode VARCHAR(20),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_modification_timestamp (modification_timestamp),
-            INDEX idx_property_type (property_type),
-            INDEX idx_listing_status (listing_status),
-            INDEX idx_city (city),
-            INDEX idx_postal_code (postal_code)
+            INDEX idx_ModificationTimestamp (ModificationTimestamp),
+            INDEX idx_PropertyType (PropertyType),
+            INDEX idx_StandardStatus (StandardStatus),
+            INDEX idx_City (City),
+            INDEX idx_PostalCode (PostalCode)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """,
         "DROP TABLE IF EXISTS properties"
@@ -95,7 +96,7 @@ MIGRATIONS: List[Tuple[int, str, str, str]] = [
         "Add latitude and longitude to properties",
         """
         ALTER TABLE properties
-        ADD COLUMN latitude DECIMAL(10, 8) NULL AFTER postal_code,
+        ADD COLUMN latitude DECIMAL(10, 8) NULL AFTER PostalCode,
         ADD COLUMN longitude DECIMAL(11, 8) NULL AFTER latitude,
         ADD INDEX idx_location (latitude, longitude)
         """,
@@ -111,8 +112,8 @@ MIGRATIONS: List[Tuple[int, str, str, str]] = [
         "Add county and MLS fields to properties",
         """
         ALTER TABLE properties
-        ADD COLUMN county VARCHAR(100) NULL AFTER state_or_province,
-        ADD COLUMN mls_id VARCHAR(50) NULL AFTER listing_key,
+        ADD COLUMN county VARCHAR(100) NULL AFTER StateOrProvince,
+        ADD COLUMN mls_id VARCHAR(50) NULL AFTER ListingKey,
         ADD COLUMN mls_name VARCHAR(100) NULL AFTER mls_id,
         ADD INDEX idx_county (county),
         ADD INDEX idx_mls_id (mls_id)

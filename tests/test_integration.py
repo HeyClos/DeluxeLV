@@ -58,24 +58,25 @@ def create_test_config() -> Config:
 
 
 def create_mock_api_records(count: int = 10) -> List[Dict[str, Any]]:
-    """Create mock API response records with normalized field names."""
+    """Create mock API response records with API field names."""
     records = []
     for i in range(count):
         records.append({
-            'listing_key': f'LISTING{i:05d}',
-            'list_price': 100000 + (i * 10000),
-            'property_type': 'Residential' if i % 2 == 0 else 'Commercial',
-            'bedrooms_total': (i % 5) + 1,
-            'bathrooms_total': ((i % 3) + 1) + 0.5,
-            'square_feet': 1000 + (i * 100),
-            'lot_size_acres': 0.25 + (i * 0.1),
-            'year_built': 1990 + (i % 30),
-            'listing_status': 'Active' if i % 3 == 0 else 'Pending',
-            'modification_timestamp': datetime.now(),
-            'street_address': f'{100 + i} Main Street',
-            'city': 'Test City',
-            'state_or_province': 'CA',
-            'postal_code': f'9000{i % 10}'
+            'ListingKey': f'LISTING{i:05d}',
+            'ListPrice': 100000 + (i * 10000),
+            'PropertyType': 'Residential' if i % 2 == 0 else 'Commercial',
+            'BedroomsTotal': (i % 5) + 1,
+            'BathroomsTotalInteger': ((i % 3) + 1) + 0.5,
+            'LivingArea': 1000 + (i * 100),
+            'LotSizeAcres': 0.25 + (i * 0.1),
+            'YearBuilt': 1990 + (i % 30),
+            'StandardStatus': 'Active' if i % 3 == 0 else 'Pending',
+            'ModificationTimestamp': datetime.now(),
+            'StreetNumber': str(100 + i),
+            'StreetName': 'Main Street',
+            'City': 'Test City',
+            'StateOrProvince': 'CA',
+            'PostalCode': f'9000{i % 10}'
         })
     return records
 
@@ -109,9 +110,9 @@ class TestEndToEndETLFlow:
         
         # Verify transformed records have correct field names
         for record in transform_result['records']:
-            assert 'listing_key' in record
-            assert 'list_price' in record
-            assert 'property_type' in record
+            assert 'ListingKey' in record
+            assert 'ListPrice' in record
+            assert 'PropertyType' in record
     
     def test_etl_flow_handles_mixed_valid_invalid_records(self):
         """
@@ -124,12 +125,12 @@ class TestEndToEndETLFlow:
         
         # Add invalid records
         records.append({
-            'listing_key': None,  # Invalid - missing required field
-            'list_price': 'not_a_number'
+            'ListingKey': None,  # Invalid - missing required field
+            'ListPrice': 'not_a_number'
         })
         records.append({
-            'listing_key': 'INVALID001',
-            'modification_timestamp': 'invalid_date'
+            'ListingKey': 'INVALID001',
+            'ModificationTimestamp': 'invalid_date'
         })
         
         transformer = DataTransformer()
@@ -184,10 +185,10 @@ class TestDatabaseSchemaCompatibility:
         
         # Expected database fields
         expected_fields = {
-            'listing_key', 'list_price', 'property_type', 'bedrooms_total',
-            'bathrooms_total', 'square_feet', 'lot_size_acres', 'year_built',
-            'listing_status', 'modification_timestamp', 'street_address',
-            'city', 'state_or_province', 'postal_code'
+            'ListingKey', 'ListPrice', 'PropertyType', 'BedroomsTotal',
+            'BathroomsTotalInteger', 'LivingArea', 'LotSizeAcres', 'YearBuilt',
+            'StandardStatus', 'ModificationTimestamp', 'StreetNumber',
+            'StreetName', 'City', 'StateOrProvince', 'PostalCode'
         }
         
         for record in result['records']:
@@ -195,21 +196,21 @@ class TestDatabaseSchemaCompatibility:
             record_fields = set(record.keys())
             missing_fields = expected_fields - record_fields
             
-            # listing_key is required
-            assert 'listing_key' in record, "listing_key is required"
+            # ListingKey is required
+            assert 'ListingKey' in record, "ListingKey is required"
             
-            # modification_timestamp is required
-            assert 'modification_timestamp' in record, "modification_timestamp is required"
+            # ModificationTimestamp is required
+            assert 'ModificationTimestamp' in record, "ModificationTimestamp is required"
     
     def test_mysql_loader_property_fields_match_schema(self):
         """
         Verify MySQLLoader.PROPERTY_FIELDS matches expected schema.
         """
         expected_fields = [
-            'listing_key', 'list_price', 'property_type', 'bedrooms_total',
-            'bathrooms_total', 'square_feet', 'lot_size_acres', 'year_built',
-            'listing_status', 'modification_timestamp', 'street_address',
-            'city', 'state_or_province', 'postal_code'
+            'ListingKey', 'ListPrice', 'PropertyType', 'BedroomsTotal',
+            'BathroomsTotalInteger', 'LivingArea', 'LotSizeAcres', 'YearBuilt',
+            'StandardStatus', 'ModificationTimestamp', 'StreetNumber',
+            'StreetName', 'City', 'StateOrProvince', 'PostalCode'
         ]
         
         assert MySQLLoader.PROPERTY_FIELDS == expected_fields
@@ -429,29 +430,29 @@ class TestConfigurationProfiles:
 class TestDataTransformationIntegration:
     """Test data transformation integration."""
     
-    def test_field_name_normalization_integration(self):
-        """Test field name normalization works end-to-end."""
+    def test_field_name_preservation_integration(self):
+        """Test field names are preserved as-is from the API."""
         transformer = DataTransformer()
         
-        # Test various API field names
-        api_fields = [
-            'ListingKey',
-            'ListPrice',
-            'PropertyType',
-            'BedroomsTotal',
-            'BathroomsTotal',
-            'ModificationTimestamp'
-        ]
+        # Test that API field names pass through unchanged
+        api_record = {
+            'ListingKey': 'TEST001',
+            'ListPrice': 500000,
+            'PropertyType': 'Residential',
+            'BedroomsTotal': 3,
+            'BathroomsTotalInteger': 2,
+            'ModificationTimestamp': datetime.now()
+        }
         
-        for field in api_fields:
-            normalized = transformer.normalize_field_name(field)
-            
-            # Should be lowercase with underscores
-            assert normalized == normalized.lower()
-            assert ' ' not in normalized
-            
-            # Should be valid SQL identifier
-            assert normalized[0].isalpha() or normalized[0] == '_'
+        result = transformer.transform_record(api_record)
+        
+        # Field names should be preserved exactly as they came from the API
+        assert 'ListingKey' in result
+        assert 'ListPrice' in result
+        assert 'PropertyType' in result
+        assert 'BedroomsTotal' in result
+        assert 'BathroomsTotalInteger' in result
+        assert 'ModificationTimestamp' in result
     
     def test_data_type_conversion_integration(self):
         """Test data type conversion works end-to-end."""
@@ -477,17 +478,17 @@ class TestDataTransformationIntegration:
         transformer.clear_duplicate_cache()
         
         # First record should not be duplicate
-        record1 = {'listing_key': 'TEST001', 'list_price': 100000}
+        record1 = {'ListingKey': 'TEST001', 'ListPrice': 100000}
         is_dup1 = transformer.detect_duplicate(record1)
         assert is_dup1 is False
         
         # Same key should be duplicate
-        record2 = {'listing_key': 'TEST001', 'list_price': 200000}
+        record2 = {'ListingKey': 'TEST001', 'ListPrice': 200000}
         is_dup2 = transformer.detect_duplicate(record2)
         assert is_dup2 is True
         
         # Different key should not be duplicate
-        record3 = {'listing_key': 'TEST002', 'list_price': 150000}
+        record3 = {'ListingKey': 'TEST002', 'ListPrice': 150000}
         is_dup3 = transformer.detect_duplicate(record3)
         assert is_dup3 is False
 
@@ -510,20 +511,21 @@ class TestMySQLLoaderIntegration:
         # Create test records
         records = [
             {
-                'listing_key': f'TEST{i:03d}',
-                'list_price': 100000 + (i * 10000),
-                'property_type': 'Residential',
-                'bedrooms_total': 3,
-                'bathrooms_total': 2.0,
-                'square_feet': 1500,
-                'lot_size_acres': 0.25,
-                'year_built': 2000,
-                'listing_status': 'Active',
-                'modification_timestamp': datetime.now(),
-                'street_address': f'{100 + i} Test St',
-                'city': 'Test City',
-                'state_or_province': 'CA',
-                'postal_code': '90001'
+                'ListingKey': f'TEST{i:03d}',
+                'ListPrice': 100000 + (i * 10000),
+                'PropertyType': 'Residential',
+                'BedroomsTotal': 3,
+                'BathroomsTotalInteger': 2.0,
+                'LivingArea': 1500,
+                'LotSizeAcres': 0.25,
+                'YearBuilt': 2000,
+                'StandardStatus': 'Active',
+                'ModificationTimestamp': datetime.now(),
+                'StreetNumber': str(100 + i),
+                'StreetName': 'Test St',
+                'City': 'Test City',
+                'StateOrProvince': 'CA',
+                'PostalCode': '90001'
             }
             for i in range(10)
         ]

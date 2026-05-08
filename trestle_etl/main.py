@@ -464,71 +464,104 @@ class ETLOrchestrator:
             if data_types:
                 sync_data_types = [DataType(dt) for dt in data_types if hasattr(DataType, dt.upper())]
             
-            # Execute sync
-            if self._should_stop:
-                raise ETLExecutionError("ETL stopped by signal")
-            
-            batch_result = self._incremental_sync.execute_batched_sync(
-                data_types=sync_data_types,
-                use_incremental=not full_sync,
-                use_expand=self.config.etl.use_expand
-            )
-            
-            # Process results for each data type
-            for data_type, sync_result in batch_result.results.items():
-                if sync_result.records_fetched > 0:
-                    # Transform data
-                    self.logger.log_transformation_start(sync_result.records_fetched)
-                    
-                    # Get raw records from API (re-fetch for transformation)
-                    # In a real implementation, we'd cache these from the sync
-                    records = self._fetch_records_for_type(
-                        data_type, 
-                        full_sync,
-                        sync_result.records_fetched
-                    )
-                    
-                    if records and not dry_run:
-                        # Transform records
-                        transform_result = self._data_transformer.transform_batch(
-                            records,
-                            continue_on_error=True
-                        )
+            # Execute streaming sync: fetch one page at a time from the API,
+            # transform, and commit to MySQL with checkpoints. This avoids
+            # loading millions of records into memory and ensures we can resume
+            # from the last checkpoint if the process is interrupted.
+            for data_type in sync_data_types:
+                if self._should_stop:
+                    raise ETLExecutionError("ETL stopped by signal")
+                
+                self.logger.log_info(f"Starting streaming sync for {data_type.value}")
+                
+                # Build the incremental filter
+                last_sync = None if full_sync else self._mysql_loader.get_last_sync_timestamp()
+                filter_expr = None
+                if last_sync:
+                    timestamp_str = last_sync.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    filter_expr = f"{self.config.etl.incremental_field} gt {timestamp_str}"
+                    self.logger.log_info(f"Incremental filter: {filter_expr}")
+                else:
+                    self.logger.log_info("No previous sync timestamp, performing full sync")
+                
+                # Stream pages from the API and process each one immediately
+                page_num = 0
+                max_api_timestamp = None
+                
+                try:
+                    for page_records in self._odata_client.execute_paginated_query_streaming(
+                        entity_set=data_type.value,
+                        filter_expr=filter_expr,
+                        top=self.config.etl.batch_size,
+                        throttle_seconds=self.config.etl.throttle_seconds
+                    ):
+                        if self._should_stop:
+                            self.logger.log_info("Stop signal received, committing progress and exiting")
+                            break
                         
-                        self.logger.log_transformation_stats(
-                            total_records=transform_result['stats'].total_records,
-                            valid_records=transform_result['stats'].valid_records,
-                            invalid_records=transform_result['stats'].invalid_records,
-                            duplicates_found=transform_result['stats'].duplicates_detected
-                        )
+                        page_num += 1
+                        results['api_calls'] += 1
                         
-                        # Load to database
-                        if transform_result['records']:
-                            load_result = self._mysql_loader.batch_upsert_with_tracking(
-                                transform_result['records']
+                        if not page_records:
+                            continue
+                        
+                        # Transform this page
+                        if not dry_run:
+                            transform_result = self._data_transformer.transform_batch(
+                                page_records,
+                                continue_on_error=True
                             )
                             
-                            results['records_inserted'] += load_result.inserted
-                            results['records_updated'] += load_result.updated
+                            # Load to database with checkpoint commit
+                            if transform_result['records']:
+                                load_result = self._mysql_loader.batch_upsert_with_checkpoint(
+                                    transform_result['records'],
+                                    sync_run=self._sync_run,
+                                    checkpoint_size=len(transform_result['records']),  # Commit each page
+                                    timestamp_field='ModificationTimestamp'
+                                )
+                                
+                                results['records_inserted'] += load_result.inserted
+                                results['records_updated'] += load_result.updated
+                        
+                        # Track max modification timestamp from this page
+                        for record in page_records:
+                            mod_ts = record.get('ModificationTimestamp')
+                            if mod_ts:
+                                if isinstance(mod_ts, str):
+                                    try:
+                                        mod_ts = datetime.fromisoformat(
+                                            mod_ts.replace('Z', '+00:00')
+                                        )
+                                    except (ValueError, TypeError):
+                                        mod_ts = None
+                                if mod_ts and (max_api_timestamp is None or mod_ts > max_api_timestamp):
+                                    max_api_timestamp = mod_ts
+                        
+                        results['records_processed'] += len(page_records)
+                        
+                        # Log progress periodically
+                        if page_num % 10 == 0:
+                            self.logger.log_info(
+                                f"Progress: {results['records_processed']:,} records processed "
+                                f"({results['records_inserted']:,} inserted, "
+                                f"{results['records_updated']:,} updated) - page {page_num}"
+                            )
                     
-                    results['records_processed'] += sync_result.records_fetched
+                except ODataError as e:
+                    results['errors'].append(f"{data_type.value}: {str(e)}")
+                    self.logger.log_api_error(data_type.value, e)
                 
-                results['api_calls'] += sync_result.api_calls_made
-                
-                if sync_result.errors:
-                    results['errors'].extend(sync_result.errors)
+                self.logger.log_info(
+                    f"Completed {data_type.value}: {results['records_processed']:,} records "
+                    f"in {page_num} pages"
+                )
             
             # Complete sync run
             if self._sync_run and not dry_run:
                 # Use the max ModificationTimestamp from the API response rather than
                 # datetime.now(). This ensures the next incremental sync filters from
                 # the actual data watermark, not the wall-clock time of this run.
-                max_api_timestamp = None
-                for sync_result in batch_result.results.values():
-                    if sync_result.last_modification_timestamp:
-                        if max_api_timestamp is None or sync_result.last_modification_timestamp > max_api_timestamp:
-                            max_api_timestamp = sync_result.last_modification_timestamp
-                
                 self._sync_run.last_sync_timestamp = max_api_timestamp or datetime.now()
                 self._mysql_loader.complete_sync_run(
                     self._sync_run,
@@ -587,7 +620,12 @@ class ETLOrchestrator:
         full_sync: bool,
         expected_count: int
     ) -> List[Dict[str, Any]]:
-        """Fetch records for a specific data type."""
+        """
+        Fetch records for a specific data type (legacy, non-streaming).
+        
+        Note: The main run() method now uses streaming pagination directly.
+        This method is retained for backward compatibility with external callers.
+        """
         last_sync = None if full_sync else self._mysql_loader.get_last_sync_timestamp()
         
         filter_expr = None

@@ -66,27 +66,28 @@ class BatchResult:
 # SQL schema definitions
 PROPERTIES_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS properties (
-    listing_key VARCHAR(255) PRIMARY KEY,
-    list_price DECIMAL(12,2),
-    property_type VARCHAR(100),
-    bedrooms_total INT,
-    bathrooms_total DECIMAL(3,1),
-    square_feet INT,
-    lot_size_acres DECIMAL(10,4),
-    year_built INT,
-    listing_status VARCHAR(50),
-    modification_timestamp DATETIME,
-    street_address VARCHAR(255),
-    city VARCHAR(100),
-    state_or_province VARCHAR(50),
-    postal_code VARCHAR(20),
+    ListingKey VARCHAR(255) PRIMARY KEY,
+    ListPrice DECIMAL(12,2),
+    PropertyType VARCHAR(100),
+    BedroomsTotal INT,
+    BathroomsTotalInteger DECIMAL(3,1),
+    LivingArea INT,
+    LotSizeAcres DECIMAL(10,4),
+    YearBuilt INT,
+    StandardStatus VARCHAR(50),
+    ModificationTimestamp DATETIME,
+    StreetNumber VARCHAR(50),
+    StreetName VARCHAR(200),
+    City VARCHAR(100),
+    StateOrProvince VARCHAR(50),
+    PostalCode VARCHAR(20),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_modification_timestamp (modification_timestamp),
-    INDEX idx_property_type (property_type),
-    INDEX idx_listing_status (listing_status),
-    INDEX idx_city (city),
-    INDEX idx_postal_code (postal_code)
+    INDEX idx_ModificationTimestamp (ModificationTimestamp),
+    INDEX idx_PropertyType (PropertyType),
+    INDEX idx_StandardStatus (StandardStatus),
+    INDEX idx_City (City),
+    INDEX idx_PostalCode (PostalCode)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
@@ -117,12 +118,14 @@ class MySQLLoader:
     batch insert/update operations, and sync metadata tracking.
     """
     
-    # Property fields for insert/update operations
+    # Fallback property fields for insert/update operations.
+    # Used only when dynamic column detection is unavailable.
+    # These match the API field names stored as-is in MySQL.
     PROPERTY_FIELDS = [
-        'listing_key', 'list_price', 'property_type', 'bedrooms_total',
-        'bathrooms_total', 'square_feet', 'lot_size_acres', 'year_built',
-        'listing_status', 'modification_timestamp', 'street_address',
-        'city', 'state_or_province', 'postal_code'
+        'ListingKey', 'ListPrice', 'PropertyType', 'BedroomsTotal',
+        'BathroomsTotalInteger', 'LivingArea', 'LotSizeAcres', 'YearBuilt',
+        'StandardStatus', 'ModificationTimestamp', 'StreetNumber',
+        'StreetName', 'City', 'StateOrProvince', 'PostalCode'
     ]
     
     def __init__(
@@ -150,6 +153,7 @@ class MySQLLoader:
         self.logger = logger or logging.getLogger(__name__)
         self._connection: Optional[pymysql.Connection] = None
         self._current_sync_run: Optional[SyncRun] = None
+        self._db_columns: Optional[set] = None
     
     def _calculate_backoff_delay(self, attempt: int) -> float:
         """
@@ -245,6 +249,34 @@ class MySQLLoader:
             self._connection.close()
             self._connection = None
             self.logger.info("Database connection closed")
+
+    def _get_db_columns(self) -> set:
+        """
+        Get the set of actual column names in the properties table.
+        
+        Caches the result so the DB is only queried once per loader instance.
+        
+        Returns:
+            Set of column names that exist in the properties table.
+        """
+        if self._db_columns is not None:
+            return self._db_columns
+        
+        try:
+            with self.connection_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'properties'",
+                        (self.config.database,)
+                    )
+                    self._db_columns = {row['COLUMN_NAME'] for row in cursor.fetchall()}
+                    self.logger.info(f"Detected {len(self._db_columns)} columns in properties table")
+        except pymysql.Error as e:
+            self.logger.warning(f"Could not detect DB columns, falling back to PROPERTY_FIELDS: {e}")
+            self._db_columns = set(self.PROPERTY_FIELDS)
+        
+        return self._db_columns
     
     def initialize_schema(self) -> None:
         """
@@ -270,19 +302,21 @@ class MySQLLoader:
         except pymysql.Error as e:
             raise DatabaseError(f"Failed to initialize schema: {str(e)}")
 
-    def _prepare_record_values(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_record_values(self, record: Dict[str, Any], fields: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Prepare record values for database insertion.
         
         Args:
             record: Record dictionary.
+            fields: Optional list of fields to prepare. Defaults to PROPERTY_FIELDS.
             
         Returns:
             Dictionary with prepared values.
         """
         prepared = {}
+        target_fields = fields or self.PROPERTY_FIELDS
         
-        for field in self.PROPERTY_FIELDS:
+        for field in target_fields:
             value = record.get(field)
             
             # Handle special conversions
@@ -321,10 +355,20 @@ class MySQLLoader:
         batch_size = batch_size or self.batch_size
         result = BatchResult(total_records=len(records))
         
+        # Determine fields dynamically from records and DB columns
+        db_columns = self._get_db_columns()
+        sample_fields = set()
+        for record in records[:10]:
+            sample_fields.update(record.keys())
+        fields = sorted(f for f in sample_fields if f in db_columns and not f.startswith('_'))
+        if 'ListingKey' in fields:
+            fields.remove('ListingKey')
+        fields = ['ListingKey'] + fields
+        
         # Build INSERT statement
-        fields = ', '.join(self.PROPERTY_FIELDS)
-        placeholders = ', '.join(['%s'] * len(self.PROPERTY_FIELDS))
-        insert_sql = f"INSERT INTO properties ({fields}) VALUES ({placeholders})"
+        fields_str = ', '.join(fields)
+        placeholders = ', '.join(['%s'] * len(fields))
+        insert_sql = f"INSERT INTO properties ({fields_str}) VALUES ({placeholders})"
         
         try:
             with self.connection_context() as conn:
@@ -335,8 +379,8 @@ class MySQLLoader:
                         batch_values = []
                         
                         for record in batch:
-                            prepared = self._prepare_record_values(record)
-                            values = tuple(prepared.get(f) for f in self.PROPERTY_FIELDS)
+                            prepared = self._prepare_record_values(record, fields)
+                            values = tuple(prepared.get(f) for f in fields)
                             batch_values.append(values)
                         
                         try:
@@ -379,16 +423,26 @@ class MySQLLoader:
         batch_size = batch_size or self.batch_size
         result = BatchResult(total_records=len(records))
         
-        # Build UPSERT statement (INSERT ... ON DUPLICATE KEY UPDATE)
-        fields = ', '.join(self.PROPERTY_FIELDS)
-        placeholders = ', '.join(['%s'] * len(self.PROPERTY_FIELDS))
+        # Determine fields dynamically from records and DB columns
+        db_columns = self._get_db_columns()
+        sample_fields = set()
+        for record in records[:10]:
+            sample_fields.update(record.keys())
+        fields = sorted(f for f in sample_fields if f in db_columns and not f.startswith('_'))
+        if 'ListingKey' in fields:
+            fields.remove('ListingKey')
+        fields = ['ListingKey'] + fields
         
-        # Update all fields except listing_key on duplicate
-        update_fields = [f for f in self.PROPERTY_FIELDS if f != 'listing_key']
+        # Build UPSERT statement (INSERT ... ON DUPLICATE KEY UPDATE)
+        fields_str = ', '.join(fields)
+        placeholders = ', '.join(['%s'] * len(fields))
+        
+        # Update all fields except ListingKey on duplicate
+        update_fields = [f for f in fields if f != 'ListingKey']
         update_clause = ', '.join([f"{f} = VALUES({f})" for f in update_fields])
         
         upsert_sql = f"""
-            INSERT INTO properties ({fields}) 
+            INSERT INTO properties ({fields_str}) 
             VALUES ({placeholders})
             ON DUPLICATE KEY UPDATE {update_clause}
         """
@@ -402,8 +456,8 @@ class MySQLLoader:
                         batch_values = []
                         
                         for record in batch:
-                            prepared = self._prepare_record_values(record)
-                            values = tuple(prepared.get(f) for f in self.PROPERTY_FIELDS)
+                            prepared = self._prepare_record_values(record, fields)
+                            values = tuple(prepared.get(f) for f in fields)
                             batch_values.append(values)
                         
                         try:
@@ -455,19 +509,29 @@ class MySQLLoader:
         batch_size = batch_size or self.batch_size
         result = BatchResult(total_records=len(records))
         
+        # Determine fields dynamically from records and DB columns
+        db_columns = self._get_db_columns()
+        sample_fields = set()
+        for record in records[:10]:
+            sample_fields.update(record.keys())
+        fields = sorted(f for f in sample_fields if f in db_columns and not f.startswith('_'))
+        if 'ListingKey' in fields:
+            fields.remove('ListingKey')
+        fields = ['ListingKey'] + fields
+        
         try:
             with self.connection_context() as conn:
                 with conn.cursor() as cursor:
                     # Get existing listing keys
-                    listing_keys = [r.get('listing_key') for r in records if r.get('listing_key')]
+                    listing_keys = [r.get('ListingKey') for r in records if r.get('ListingKey')]
                     
                     if listing_keys:
                         placeholders = ', '.join(['%s'] * len(listing_keys))
                         cursor.execute(
-                            f"SELECT listing_key FROM properties WHERE listing_key IN ({placeholders})",
+                            f"SELECT ListingKey FROM properties WHERE ListingKey IN ({placeholders})",
                             listing_keys
                         )
-                        existing_keys = {row['listing_key'] for row in cursor.fetchall()}
+                        existing_keys = {row['ListingKey'] for row in cursor.fetchall()}
                     else:
                         existing_keys = set()
                     
@@ -476,20 +540,20 @@ class MySQLLoader:
                     updates = []
                     
                     for record in records:
-                        key = record.get('listing_key')
+                        key = record.get('ListingKey')
                         if key in existing_keys:
                             updates.append(record)
                         else:
                             inserts.append(record)
                     
                     # Perform upsert
-                    fields = ', '.join(self.PROPERTY_FIELDS)
-                    placeholders = ', '.join(['%s'] * len(self.PROPERTY_FIELDS))
-                    update_fields = [f for f in self.PROPERTY_FIELDS if f != 'listing_key']
+                    fields_str = ', '.join(fields)
+                    placeholders = ', '.join(['%s'] * len(fields))
+                    update_fields = [f for f in fields if f != 'ListingKey']
                     update_clause = ', '.join([f"{f} = VALUES({f})" for f in update_fields])
                     
                     upsert_sql = f"""
-                        INSERT INTO properties ({fields}) 
+                        INSERT INTO properties ({fields_str}) 
                         VALUES ({placeholders})
                         ON DUPLICATE KEY UPDATE {update_clause}
                     """
@@ -500,8 +564,8 @@ class MySQLLoader:
                         batch_values = []
                         
                         for record in batch:
-                            prepared = self._prepare_record_values(record)
-                            values = tuple(prepared.get(f) for f in self.PROPERTY_FIELDS)
+                            prepared = self._prepare_record_values(record, fields)
+                            values = tuple(prepared.get(f) for f in fields)
                             batch_values.append(values)
                         
                         try:
@@ -520,6 +584,197 @@ class MySQLLoader:
                     
         except pymysql.Error as e:
             raise DatabaseError(f"Batch upsert with tracking failed: {str(e)}")
+        
+        return result
+
+    def batch_upsert_with_checkpoint(
+        self,
+        records: List[Dict[str, Any]],
+        sync_run: Optional[SyncRun] = None,
+        checkpoint_size: int = 5000,
+        batch_size: Optional[int] = None,
+        timestamp_field: str = 'ModificationTimestamp',
+        on_checkpoint: Optional[Any] = None
+    ) -> BatchResult:
+        """
+        Insert or update records with periodic checkpoint commits.
+        
+        Commits every `checkpoint_size` records and updates the sync run's
+        last_sync_timestamp to the max timestamp seen so far. This ensures
+        that if the process is interrupted, only the current checkpoint batch
+        is lost and the next run can resume from the last committed watermark.
+        
+        Args:
+            records: List of records to upsert.
+            sync_run: Optional SyncRun to update at each checkpoint.
+            checkpoint_size: Number of records between commits (default 5000).
+            batch_size: SQL batch size for executemany (default self.batch_size).
+            timestamp_field: Field name to track the watermark timestamp.
+            on_checkpoint: Optional callback(checkpoint_num, total_committed, batch_result)
+                          called after each checkpoint commit.
+            
+        Returns:
+            BatchResult with cumulative insert/update counts.
+            
+        Raises:
+            DatabaseError: If a checkpoint commit fails.
+        """
+        if not records:
+            return BatchResult()
+        
+        batch_size = batch_size or self.batch_size
+        result = BatchResult(total_records=len(records))
+        max_timestamp_seen = None
+        
+        # Determine which fields to use based on actual DB columns
+        db_columns = self._get_db_columns()
+        
+        # Collect all fields present in the records that also exist in the DB
+        # Use the first record as a representative sample, but include ListingKey always
+        sample_fields = set()
+        for record in records[:10]:  # Sample first 10 records for field detection
+            sample_fields.update(record.keys())
+        
+        # Filter to only fields that exist as DB columns, exclude internal fields
+        fields = sorted(
+            f for f in sample_fields
+            if f in db_columns and not f.startswith('_')
+        )
+        
+        # Ensure ListingKey is always first (it's the primary key)
+        if 'ListingKey' in fields:
+            fields.remove('ListingKey')
+        fields = ['ListingKey'] + fields
+        
+        self.logger.info(f"Upserting with {len(fields)} fields (out of {len(sample_fields)} in records, {len(db_columns)} in DB)")
+        
+        try:
+            with self.connection_context() as conn:
+                with conn.cursor() as cursor:
+                    # Build the upsert SQL dynamically from detected fields
+                    fields_str = ', '.join(fields)
+                    placeholders = ', '.join(['%s'] * len(fields))
+                    update_fields = [f for f in fields if f != 'ListingKey']
+                    update_clause = ', '.join([f"{f} = VALUES({f})" for f in update_fields])
+                    
+                    upsert_sql = f"""
+                        INSERT INTO properties ({fields_str}) 
+                        VALUES ({placeholders})
+                        ON DUPLICATE KEY UPDATE {update_clause}
+                    """
+                    
+                    checkpoint_num = 0
+                    
+                    # Process records in checkpoint-sized chunks
+                    for cp_start in range(0, len(records), checkpoint_size):
+                        cp_end = min(cp_start + checkpoint_size, len(records))
+                        checkpoint_records = records[cp_start:cp_end]
+                        
+                        # Determine inserts vs updates for this checkpoint
+                        listing_keys = [r.get('ListingKey') for r in checkpoint_records if r.get('ListingKey')]
+                        existing_keys = set()
+                        if listing_keys:
+                            # Query in sub-batches to avoid overly large IN clauses
+                            for i in range(0, len(listing_keys), 1000):
+                                key_batch = listing_keys[i:i + 1000]
+                                key_placeholders = ', '.join(['%s'] * len(key_batch))
+                                cursor.execute(
+                                    f"SELECT ListingKey FROM properties WHERE ListingKey IN ({key_placeholders})",
+                                    key_batch
+                                )
+                                existing_keys.update(row['ListingKey'] for row in cursor.fetchall())
+                        
+                        cp_inserted = 0
+                        cp_updated = 0
+                        
+                        for record in checkpoint_records:
+                            key = record.get('ListingKey')
+                            if key in existing_keys:
+                                cp_updated += 1
+                            else:
+                                cp_inserted += 1
+                        
+                        # Execute upserts in SQL batch_size chunks within this checkpoint
+                        for i in range(0, len(checkpoint_records), batch_size):
+                            batch = checkpoint_records[i:i + batch_size]
+                            batch_values = []
+                            
+                            for record in batch:
+                                prepared = self._prepare_record_values(record, fields)
+                                values = tuple(prepared.get(f) for f in fields)
+                                batch_values.append(values)
+                                
+                                # Track max timestamp
+                                ts = record.get(timestamp_field)
+                                if ts:
+                                    if isinstance(ts, str):
+                                        try:
+                                            ts = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                        except (ValueError, TypeError):
+                                            ts = None
+                                    if ts and (max_timestamp_seen is None or ts > max_timestamp_seen):
+                                        max_timestamp_seen = ts
+                            
+                            try:
+                                cursor.executemany(upsert_sql, batch_values)
+                            except pymysql.Error as e:
+                                result.errors += len(batch)
+                                result.error_messages.append(
+                                    f"Checkpoint {checkpoint_num}, batch {i//batch_size}: {str(e)}"
+                                )
+                                self.logger.warning(f"Batch upsert error at checkpoint {checkpoint_num}: {str(e)}")
+                                continue
+                        
+                        # COMMIT this checkpoint
+                        conn.commit()
+                        
+                        result.inserted += cp_inserted
+                        result.updated += cp_updated
+                        checkpoint_num += 1
+                        total_committed = cp_end
+                        
+                        self.logger.info(
+                            f"Checkpoint {checkpoint_num}: committed {total_committed}/{len(records)} records "
+                            f"(+{cp_inserted} inserted, +{cp_updated} updated)"
+                        )
+                        
+                        # Update sync run watermark so recovery knows where we left off
+                        if sync_run and sync_run.sync_id and max_timestamp_seen:
+                            try:
+                                cursor.execute(
+                                    """
+                                    UPDATE etl_sync_log SET
+                                        records_processed = %s,
+                                        records_inserted = %s,
+                                        records_updated = %s,
+                                        last_sync_timestamp = %s
+                                    WHERE id = %s
+                                    """,
+                                    (
+                                        total_committed,
+                                        result.inserted,
+                                        result.updated,
+                                        max_timestamp_seen,
+                                        sync_run.sync_id
+                                    )
+                                )
+                                conn.commit()
+                            except pymysql.Error as e:
+                                self.logger.warning(
+                                    f"Failed to update sync watermark at checkpoint {checkpoint_num}: {e}"
+                                )
+                        
+                        # Invoke callback if provided
+                        if on_checkpoint:
+                            try:
+                                on_checkpoint(checkpoint_num, total_committed, result)
+                            except Exception:
+                                pass  # Don't let callback errors break the sync
+                    
+        except pymysql.Error as e:
+            raise DatabaseError(
+                f"Checkpoint upsert failed at record ~{result.inserted + result.updated + result.errors}: {str(e)}"
+            )
         
         return result
 
@@ -849,7 +1104,7 @@ class MySQLLoader:
             with self.connection_context() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        "SELECT * FROM properties WHERE listing_key = %s",
+                        "SELECT * FROM properties WHERE ListingKey = %s",
                         (listing_key,)
                     )
                     return cursor.fetchone()
@@ -874,7 +1129,7 @@ class MySQLLoader:
             with self.connection_context() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute(
-                        "DELETE FROM properties WHERE listing_key = %s",
+                        "DELETE FROM properties WHERE ListingKey = %s",
                         (listing_key,)
                     )
                     deleted = cursor.rowcount > 0
